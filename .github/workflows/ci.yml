@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: Backend (ruff + mypy --strict + pytest + cobertura)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Sin ingesta real (ccxt.pro → red) ni DB en disco durante CI.
+      ARB_INGEST_AUTOSTART: "false"
+      ARB_DB_URL: "sqlite+aiosqlite:///:memory:"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync deps (lockfile reproducible)
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check app tests
+
+      - name: Types (mypy --strict, vía pyproject)
+        run: uv run mypy app
+
+      - name: Tests + cobertura (gate >= 85%)
+        run: uv run pytest -q --cov=app --cov-report=term-missing --cov-fail-under=85
+
+  frontend:
+    name: Frontend (lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install deps (lockfile reproducible)
+        run: npm ci
+
+      - name: Lint (next lint)
+        run: npm run lint
+
+      - name: Build (next build)
+        run: npm run build

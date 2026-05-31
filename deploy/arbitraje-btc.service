@@ -1,0 +1,22 @@
+[Unit]
+Description=arbitraje-btc backend (FastAPI + pipeline asyncio)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arbitraje
+WorkingDirectory=/opt/arbitraje-btc/backend
+EnvironmentFile=/opt/arbitraje-btc/backend/.env
+# 1 worker (estado en memoria) + uvloop. --timeout-keep-alive 300: el default de
+# 5 s mata las conexiones SSE inactivas (gotcha crítico).
+ExecStart=/opt/arbitraje-btc/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 \
+    --workers 1 --loop uvloop --http httptools \
+    --timeout-keep-alive 300
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

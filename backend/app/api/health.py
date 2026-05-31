@@ -1,0 +1,78 @@
+"""`GET /health` — readiness para systemd/nginx/monitor (NFR-008).
+
+Estado de feeds/conexiones/breakers se irá enriqueciendo en STORY-014/018.
+"""
+from __future__ import annotations
+
+import time
+from typing import Any
+
+from fastapi import APIRouter, Request
+
+from ..models.enums import ConnectionStatus
+from ..risk.watchdog import is_stale
+
+router = APIRouter(tags=["ops"])
+
+
+@router.get("/health")
+async def health(request: Request) -> dict[str, Any]:
+    ctx = getattr(request.app.state, "ctx", None)
+    if ctx is None:
+        return {"status": "starting"}
+    s = ctx.settings
+
+    # Estado de feeds por venue (C1) + precio normalizado a USD (C3). El watchdog
+    # completo de staleness es STORY-014.
+    feeds: dict[str, dict[str, Any]] = {}
+    now = time.monotonic()
+    for ex in (e.id for e in s.enabled_exchanges):
+        book = ctx.latest_books.get(ex)
+        nb = ctx.latest_norm.get(ex)
+        # Autoridad de estado = el watchdog (feed_status). Antes de su primer tick
+        # (o con autostart off) se recomputa sobre latest_norm — la MISMA base que
+        # usan el watchdog y el detector — para que /health nunca contradiga la
+        # decisión real de trading (p.ej. raw fresco pero sin peg → no operable).
+        status = ctx.feed_status.get(ex)
+        if status is None:
+            status = (
+                ConnectionStatus.stale
+                if nb is None or is_stale(nb.ts_recv_monotonic, now, s.staleness_ms)
+                else ConnectionStatus.live
+            )
+        if book is None:
+            feeds[ex] = {"book": False, "status": status.value, "age_ms": None}
+            continue
+        entry = {
+            "book": True,
+            "quote_ccy": book.quote_ccy,
+            "age_ms": round((now - book.ts_recv_monotonic) * 1000, 1),
+            "status": status.value,
+            "best_bid": book.best_bid,
+            "best_ask": book.best_ask,
+        }
+        if nb is not None:
+            entry["usd_bid"] = nb.best_bid
+            entry["usd_ask"] = nb.best_ask
+        feeds[ex] = entry
+
+    return {
+        "status": "ok",
+        "app": s.app_name,
+        "env": s.env,
+        "version": request.app.version,
+        "exchanges": [e.id for e in s.enabled_exchanges],
+        "peg": ctx.peg.snapshot() if ctx.peg else {},
+        "feeds": feeds,
+        "integrity": ctx.integrity.reports() if ctx.integrity else {},
+        "breakers": (
+            ctx.breakers.status()
+            if ctx.breakers
+            else {"halted": False, "active": [], "breakers": []}
+        ),
+        "funnel": ctx.opp_counts,
+        "recent_opps": len(ctx.recent_opps),
+        "sse_clients": ctx.hub.client_count,
+        # C16 (STORY-024): fallback de demo — badge "DEMO DATA" cuando se reproduce grabación.
+        "demo": ctx.demo.status() if ctx.demo else {"active": False, "source": "live"},
+    }

@@ -1,0 +1,43 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+
+# --- Datos / runtime ---
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+recordings/
+*.log
+
+# --- Entorno (los .example SÍ se versionan) ---
+.env
+.env.local
+.env.*.local
+
+# --- Node / Next ---
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts.bak
+.pnp.*
+npm-debug.log*
+yarn-error.log*
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Coverage artifacts
+.coverage
+htmlcov/

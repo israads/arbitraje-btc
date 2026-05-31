@@ -1,0 +1,17 @@
+# Despliegue del backend. El frontend se construye aparte (`next build` + `next
+# start` o estático tras nginx); ver deploy/README.md.
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: arbitraje-btc-backend
+    container_name: arbitraje-btc-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ARB_ENV=prod
+    # Para overrides desde archivo, crea backend/.env y descomenta:
+    # env_file:
+    #   - ../backend/.env

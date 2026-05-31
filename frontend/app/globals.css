@@ -1,0 +1,162 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   Capa global del tema "Bitstamp-like" quant terminal.
+   Importado DESPUÉS de los estilos de Mantine, por lo que gana en cascada.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --brand: #16d67f;
+  --brand-soft: rgba(22, 214, 127, 0.12);
+  --surface-line: rgba(255, 255, 255, 0.06);
+  /* Color semántico CONTENIDO (estilo Hyperliquid): verde/rojo ligeramente desaturados para
+     datos densos — el ojo aguanta horas y el color "significa" dirección, no decora. */
+  --pos: #2fd98c;
+  --pos-soft: rgba(47, 217, 140, 0.13);
+  --neg: #f6678a;
+  --neg-soft: rgba(246, 103, 138, 0.13);
+  /* Sistema de superficies (4 niveles, elevación por luminosidad + borde 1px, sin sombras
+     grandes — patrón de terminales reales vs. cards flotando de "admin SaaS"). */
+  --s-base: #0a0e16;
+  --s-panel: #111824;
+  --s-elev: #18212e;
+  --s-border: rgba(255, 255, 255, 0.07);
+  --s-border-strong: rgba(255, 255, 255, 0.1);
+}
+
+/* Numéricos tabulares en TODA la app: los dígitos no "bailan" al actualizarse en vivo.
+   Es el detalle que más separa una herramienta de trader de un dashboard genérico. */
+html {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv01' 1;
+}
+
+/* Evita scroll horizontal accidental a nivel de página (las tablas anchas tienen su
+   propio Table.ScrollContainer con overflow interno). */
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+/* Fondo: near-black con un halo verde MUY sutil arriba (fresco, tecnológico, sin saturar). */
+body {
+  background-color: var(--s-base);
+  background-image:
+    radial-gradient(900px 420px at 18% -8%, rgba(22, 214, 127, 0.07), transparent 60%),
+    radial-gradient(1000px 520px at 100% 0%, rgba(19, 198, 207, 0.05), transparent 55%),
+    linear-gradient(180deg, #0a0e16 0%, #080b12 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Numéricos siempre tabulares y alineados (clave en datos financieros). */
+:is(code, kbd, samp, pre),
+[style*='monospace'],
+.mono-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv01' 1;
+}
+
+/* Selección con tinte de marca. */
+::selection {
+  background: rgba(22, 214, 127, 0.28);
+  color: #f4f7fc;
+}
+
+/* Scrollbar discreta y acorde al tema. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #27313f transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #27313f;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #34404f;
+  background-clip: content-box;
+}
+
+/* Superficies: elevación por luminosidad + borde 1px + brillo interior superior, SIN sombra
+   grande (las sombras son cosa de light mode / SaaS genérico). Acabado plano premium. */
+.mantine-Card-root {
+  background-color: var(--s-panel);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 38%);
+  border-color: var(--s-border);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.035) inset,
+    0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+.mantine-Card-root:hover {
+  border-color: var(--s-border-strong);
+}
+
+/* Cabeceras de tabla: etiqueta técnica, fina y en mayúsculas espaciadas. */
+.mantine-Table-th {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--mantine-color-dark-2);
+}
+
+/* Filas de tabla con hover INSTANTÁNEO a la superficie elevada (sensación responsiva
+   de herramienta de trading, no de admin lento). */
+.mantine-Table-tr:hover .mantine-Table-td {
+  background: var(--s-elev);
+}
+
+/* Flash de tick verde/rojo al actualizar un valor en vivo (firma visual de "esto está
+   vivo", estilo order book). Se aplica añadiendo .tick-up / .tick-down por ~200ms. */
+@keyframes tick-up {
+  0% { background-color: var(--pos-soft); }
+  100% { background-color: transparent; }
+}
+@keyframes tick-down {
+  0% { background-color: var(--neg-soft); }
+  100% { background-color: transparent; }
+}
+.tick-up { animation: tick-up 260ms ease-out; }
+.tick-down { animation: tick-down 260ms ease-out; }
+
+/* Punto "live" con latido. */
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(22, 214, 127, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(22, 214, 127, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(22, 214, 127, 0);
+  }
+}
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--brand);
+  animation: pulse-dot 1.8s ease-out infinite;
+}
+
+/* Respeto a usuarios con movimiento reducido. */
+@media (prefers-reduced-motion: reduce) {
+  .live-dot,
+  .tick-up,
+  .tick-down {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.001ms !important;
+  }
+}
