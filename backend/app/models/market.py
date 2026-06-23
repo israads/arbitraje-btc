@@ -6,6 +6,8 @@ ambos relojes para decidir (ver Integration Architecture).
 """
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 # (price, qty) — qty en BTC; price en la moneda de cotización del venue.
@@ -63,6 +65,7 @@ class RawOrderBook(BaseModel):
     ts_exchange: float | None = None      # epoch ms del exchange (UTC)
     ts_recv_monotonic: float              # time.monotonic() local (latencia/staleness)
     seq: int | None = None                # nonce/sequence del exchange
+    meta: dict[str, Any] = Field(default_factory=dict)  # U/u/checksum/channel específicos
 
     @property
     def best_bid(self) -> float | None:

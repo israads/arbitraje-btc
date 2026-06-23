@@ -2,18 +2,54 @@
 vivo (`/quotes`, `/opportunities`). El resto son stubs hasta su story."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Callable
+from functools import partial
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from sse_starlette.sse import EventSourceResponse
 
 from ...models.metrics import MetricsSnapshot
+from ...models.preflight import PreflightRequest, TestOrderRequest
+from ...models.session import SessionExport, SessionMetadata
+from ...models.strategy import StrategyInfo
 
 router = APIRouter()
 log = logging.getLogger("app.api.v1")
+
+# Las proyecciones (frontier/capacity/forward) son cómputo numpy/Monte Carlo síncrono y
+# pesado. Con un único worker uvicorn (estado en memoria, NFR-008), ejecutarlas en el event
+# loop lo bloquea y congela el SSE y /health. Defensa en capas:
+#   1) se corren en threadpool (run_in_threadpool) → el event loop queda libre para el SSE;
+#   2) serializadas por un semáforo (1 a la vez): en 2 cores el pipeline de arbitraje ya usa
+#      ~1 core, así que más de un Monte Carlo simultáneo dejaría sin CPU al event loop;
+#   3) cache con TTL: cada cliente/recarga NO recomputa — se recalcula como mucho 1 vez por
+#      ventana, sin importar cuántos navegadores o polls lleguen (clave en 2 cores).
+_PROJECTION_SEM = asyncio.Semaphore(1)
+_PROJECTION_TTL = 20.0  # s — las proyecciones cambian lento; refresco sub-20s no aporta.
+_PROJECTION_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+async def _cached_projection(key: str, compute: Callable[[], Any]) -> Any:
+    """Devuelve la proyección `key` desde cache si es fresca; si no, la computa una sola vez
+    (threadpool + semáforo) y la cachea. Double-check tras el semáforo: si otra petición la
+    calculó mientras esperábamos, se reusa en vez de recomputar."""
+    now = time.monotonic()
+    hit = _PROJECTION_CACHE.get(key)
+    if hit is not None and now - hit[0] < _PROJECTION_TTL:
+        return hit[1]
+    async with _PROJECTION_SEM:
+        hit = _PROJECTION_CACHE.get(key)
+        if hit is not None and time.monotonic() - hit[0] < _PROJECTION_TTL:
+            return hit[1]
+        result = await run_in_threadpool(compute)
+        _PROJECTION_CACHE[key] = (time.monotonic(), result)
+        return result
 
 
 def require_control_token(
@@ -50,6 +86,167 @@ def _live_projection_books(ctx: Any) -> dict[str, Any] | None:
     if latest_norm:
         return cast(dict[str, Any], latest_norm)
     return None
+
+
+def _safe_session_settings(ctx: Any) -> dict[str, Any]:
+    """Lista blanca de settings para export auditable.
+
+    No serializa `control_token`, `db_url`, variables de entorno ni credenciales.
+    """
+    settings = ctx.settings
+    return {
+        "app_name": settings.app_name,
+        "env": settings.env,
+        "quote_target": settings.quote_target,
+        "staleness_ms": settings.staleness_ms,
+        "peg_tolerance": settings.peg_tolerance,
+        "max_slippage": settings.max_slippage,
+        "min_net_profit_usd": settings.min_net_profit_usd,
+        "default_trade_qty_btc": settings.default_trade_qty_btc,
+        "expected_trades_per_rebalance": settings.expected_trades_per_rebalance,
+        "demo_fallback_enabled": settings.demo_fallback_enabled,
+        "demo_stale_ms": settings.demo_stale_ms,
+        "demo_replay_interval_ms": settings.demo_replay_interval_ms,
+        "execution_mode": settings.execution_mode,
+        "enable_test_orders": settings.enable_test_orders,
+        "execution_request_timeout_s": settings.execution_request_timeout_s,
+        "execution_local_btc_balance": settings.execution_local_btc_balance,
+        "execution_local_quote_balance_usd": settings.execution_local_quote_balance_usd,
+        "calibration_mode": settings.calibration_mode,
+        "shadow_sample_maxlen": settings.shadow_sample_maxlen,
+        "survival_latencies_ms": settings.survival_latencies_ms,
+        "exchanges": {
+            key: {
+                "id": cfg.id,
+                "symbol": cfg.symbol,
+                "quote_ccy": cfg.quote_ccy,
+                "fee_taker": cfg.fee_taker,
+                "withdrawal_btc": cfg.withdrawal_btc,
+                "ob_limit": cfg.ob_limit,
+                "enabled": cfg.enabled,
+            }
+            for key, cfg in settings.exchanges.items()
+        },
+    }
+
+
+def _export_opportunity(opp: Any) -> dict[str, Any]:
+    item = cast(dict[str, Any], opp.model_dump(mode="json"))
+    explanation = getattr(opp, "explanation", None)
+    if explanation is not None:
+        item["explanation"] = explanation.model_dump(mode="json")
+    return item
+
+
+def _metrics_snapshot(ctx: Any) -> dict[str, Any]:
+    collector = getattr(ctx, "metrics", None)
+    if collector is None:
+        funnel = ctx.opp_counts
+        snap = MetricsSnapshot(
+            detected=funnel.get("detected", 0),
+            viable=funnel.get("viable", 0),
+            executable=funnel.get("executable", 0),
+            captured=funnel.get("captured", 0),
+            discarded=funnel.get("discarded", 0),
+            unwound=funnel.get("unwound", 0),
+        ).model_dump(mode="json")
+    else:
+        snap = cast(dict[str, Any], collector.snapshot(ctx.opp_counts).model_dump(mode="json"))
+    integrity = getattr(ctx, "integrity", None)
+    if integrity is not None:
+        snap["integrity"] = integrity.reports()
+    return snap
+
+
+def _record_preflight_metric(ctx: Any, venue: str, result: str) -> None:
+    collector = getattr(ctx, "metrics", None)
+    if collector is not None:
+        collector.record_preflight(venue, result)
+
+
+def _record_test_order_metric(ctx: Any, venue: str, result: str) -> None:
+    collector = getattr(ctx, "metrics", None)
+    if collector is not None:
+        collector.record_test_order(venue, result)
+
+
+def _strategy_books(ctx: Any) -> dict[str, Any]:
+    detector = getattr(ctx, "detector", None)
+    detector_books = getattr(detector, "books", None)
+    if detector_books:
+        return cast(dict[str, Any], detector_books)
+    latest_norm = getattr(ctx, "latest_norm", None)
+    if latest_norm:
+        return cast(dict[str, Any], latest_norm)
+    return {}
+
+
+def _strategy_infos(ctx: Any) -> list[StrategyInfo]:
+    settings = ctx.settings
+    return [
+        StrategyInfo(
+            id="spatial",
+            enabled=True,
+            mode="primary",
+            description="Spot cross-exchange BTC/USD; flujo principal.",
+        ),
+        StrategyInfo(
+            id="stat_z",
+            enabled=True,
+            mode="adapter",
+            description="Señal z-score existente; pasa por el mismo evaluador spot.",
+        ),
+        StrategyInfo(
+            id="triangular",
+            enabled=settings.strategy_triangular_enabled,
+            mode="demo_replay",
+            description="Ciclos intra-venue con fees y profundidad; apagado por defecto.",
+        ),
+        StrategyInfo(
+            id="funding_basis",
+            enabled=settings.strategy_funding_enabled,
+            mode="read_only",
+            description="Funding/basis separado de P&L spot; apagado por defecto.",
+        ),
+        StrategyInfo(
+            id="regional_mxn",
+            enabled=settings.strategy_regional_mxn_enabled,
+            mode="experimental",
+            description="BTC/MXN contra BTC/USD con FX explícito; apagado por defecto.",
+        ),
+    ]
+
+
+def _book_reference_price(ctx: Any, venue: str, side: str) -> float | None:
+    book = getattr(ctx, "latest_norm", {}).get(venue)
+    if book is None:
+        return None
+    price = book.best_ask if side == "buy" else book.best_bid
+    return float(price) if price is not None else None
+
+
+def _enrich_execution_request(ctx: Any, req: PreflightRequest) -> PreflightRequest:
+    """Rellena símbolo/cantidad/precio desde oportunidad reciente o book vivo.
+
+    El adapter sigue siendo puro: la API es la que conoce el estado vivo de la app.
+    """
+    updates: dict[str, Any] = {}
+    opp = getattr(ctx, "opps_by_id", {}).get(req.opportunity_id) if req.opportunity_id else None
+    if opp is not None:
+        if not req.symbol:
+            updates["symbol"] = opp.symbol
+        if req.quantity_btc <= 0.0:
+            updates["quantity_btc"] = opp.q_target
+        if req.reference_price is None:
+            if req.side == "buy" and req.venue == opp.buy_venue and opp.vwap_buy is not None:
+                updates["reference_price"] = opp.vwap_buy
+            elif req.side == "sell" and req.venue == opp.sell_venue and opp.vwap_sell is not None:
+                updates["reference_price"] = opp.vwap_sell
+    if req.reference_price is None and "reference_price" not in updates:
+        ref = _book_reference_price(ctx, req.venue, req.side)
+        if ref is not None:
+            updates["reference_price"] = ref
+    return req.model_copy(update=updates) if updates else req
 
 
 @router.get("/stream")
@@ -104,6 +301,22 @@ async def opportunities(
         "funnel": ctx.opp_counts,
         "opportunities": [o.model_dump(mode="json") for o in reversed(items)],
     }
+
+
+@router.get("/opportunities/{opportunity_id}/explain")
+async def opportunity_explain(request: Request, opportunity_id: str) -> dict[str, Any]:
+    """Explicación auditable de una oportunidad reciente (PRD-001).
+
+    El payload completo no viaja en SSE para no inflar el stream; se consulta bajo demanda
+    desde el buffer en memoria.
+    """
+    ctx = request.app.state.ctx
+    opp = getattr(ctx, "opps_by_id", {}).get(opportunity_id)
+    if opp is None:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    if opp.explanation is None:
+        raise HTTPException(status_code=409, detail="opportunity explanation unavailable")
+    return cast(dict[str, Any], opp.explanation.model_dump(mode="json"))
 
 
 # --- Stubs REST (implementación por story) ---
@@ -197,6 +410,84 @@ async def control_status(request: Request) -> dict[str, Any]:
         return {"halted": False, "active": [], "breakers": []}
     status: dict[str, Any] = breakers.status()
     return status
+
+
+@router.get("/execution/status")
+async def execution_status(request: Request) -> dict[str, Any]:
+    """Estado público y saneado de la capa PRD-003.
+
+    No incluye API keys, secrets, firmas ni rutas internas.
+    """
+    from ...execution import build_execution_status
+
+    ctx = request.app.state.ctx
+    status_model = build_execution_status(ctx.settings)
+    return status_model.model_dump(mode="json")
+
+
+@router.post("/execution/preflight", dependencies=[Depends(require_control_token)])
+async def execution_preflight(request: Request, body: PreflightRequest) -> dict[str, Any]:
+    """Valida una orden contra reglas de testnet/dry-run sin operar dinero real."""
+    from ...execution import (
+        ExecutionDisabled,
+        UnsupportedExecutionVenue,
+        ensure_execution_enabled,
+        get_execution_adapter,
+    )
+
+    ctx = request.app.state.ctx
+    try:
+        ensure_execution_enabled(ctx.settings)
+        enriched = _enrich_execution_request(ctx, body)
+        adapter = get_execution_adapter(ctx.settings, enriched.venue)
+    except ExecutionDisabled as exc:
+        _record_preflight_metric(ctx, body.venue, "blocked")
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UnsupportedExecutionVenue as exc:
+        _record_preflight_metric(ctx, body.venue, "unsupported")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = await adapter.preflight(enriched)
+    _record_preflight_metric(ctx, result.venue, "accepted" if result.accepted else "rejected")
+    log.info(
+        "execution preflight venue=%s symbol=%s accepted=%s",
+        result.venue,
+        result.symbol,
+        result.accepted,
+    )
+    return result.model_dump(mode="json")
+
+
+@router.post("/execution/test-order", dependencies=[Depends(require_control_token)])
+async def execution_test_order(request: Request, body: TestOrderRequest) -> dict[str, Any]:
+    """Envía una test order determinista/testnet sólo con flags duros activos."""
+    from ...execution import (
+        TestOrdersDisabled,
+        UnsupportedExecutionVenue,
+        ensure_test_orders_enabled,
+        get_execution_adapter,
+    )
+
+    ctx = request.app.state.ctx
+    try:
+        ensure_test_orders_enabled(ctx.settings)
+        enriched = _enrich_execution_request(ctx, body)
+        adapter = get_execution_adapter(ctx.settings, enriched.venue)
+    except TestOrdersDisabled as exc:
+        _record_test_order_metric(ctx, body.venue, "blocked")
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UnsupportedExecutionVenue as exc:
+        _record_test_order_metric(ctx, body.venue, "unsupported")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = await adapter.test_order(TestOrderRequest(**enriched.model_dump()))
+    _record_test_order_metric(ctx, result.venue, result.status)
+    log.info(
+        "execution test-order venue=%s symbol=%s accepted=%s status=%s",
+        result.venue,
+        result.symbol,
+        result.accepted,
+        result.status,
+    )
+    return result.model_dump(mode="json")
 
 
 @router.post("/control/kill-switch", dependencies=[Depends(require_control_token)])
@@ -299,19 +590,77 @@ async def demo_status(request: Request) -> dict[str, Any]:
 @router.post("/demo", dependencies=[Depends(require_control_token)])
 async def demo_set_mode(request: Request, mode: str = Query(...)) -> dict[str, Any]:
     """Fija el modo del fallback (C16): `auto` (cambia según la liveness real), `on` (fuerza
-    replay — para que el jurado vea el fallback sin matar feeds), `off` (nunca replay). El
-    cambio efectivo (activar/desactivar replay) lo aplica el siguiente tick del controlador."""
-    if mode not in ("auto", "on", "off"):
-        raise HTTPException(status_code=422, detail="mode debe ser auto|on|off")
+    replay — para que el jurado vea el fallback sin matar feeds), `jury` (escenarios
+    deterministas PRD-002), `off` (nunca replay)."""
+    if mode not in ("auto", "on", "off", "jury"):
+        raise HTTPException(status_code=422, detail="mode debe ser auto|on|off|jury")
     ctx = request.app.state.ctx
     demo = getattr(ctx, "demo", None)
     if demo is None:
         return {"active": False, "mode": "auto", "source": "live", "badge": None}
     from ...demo.fallback import Mode as _Mode
     demo.set_mode(cast(_Mode, mode))
+    demo.tick(time.monotonic())
     log.info("demo fallback: modo -> %s (operador)", mode)
     set_mode_st: dict[str, Any] = demo.status()
     return set_mode_st
+
+
+@router.get("/session/export")
+async def session_export(request: Request) -> dict[str, Any]:
+    """Export auditable de la sesión actual (PRD-002).
+
+    El payload usa lista blanca de configuración para evitar filtrar tokens,
+    credenciales o rutas internas sensibles.
+    """
+    from ...validate import build_validation_report
+
+    ctx = request.app.state.ctx
+    settings = ctx.settings
+    demo = getattr(ctx, "demo", None)
+    breakers = getattr(ctx, "breakers", None)
+    recorder = getattr(ctx, "recorder", None)
+    export = SessionExport(
+        metadata=SessionMetadata(
+            app=settings.app_name,
+            env=settings.env,
+            version="0.1.0",
+            exported_at=time.time(),
+        ),
+        settings=_safe_session_settings(ctx),
+        quotes=[
+            cast(dict[str, Any], nb.model_dump(mode="json"))
+            for nb in ctx.latest_norm.values()
+        ],
+        opportunities=[_export_opportunity(o) for o in reversed(list(ctx.recent_opps))],
+        metrics=_metrics_snapshot(ctx),
+        breakers=breakers.status() if breakers is not None else {
+            "halted": False,
+            "active": [],
+            "breakers": [],
+        },
+        demo=demo.status() if demo is not None else {
+            "active": False,
+            "mode": "auto",
+            "source": "live",
+            "badge": None,
+        },
+        calibration={
+            "mode": settings.calibration_mode,
+            "n_shadow_samples": len(getattr(ctx, "shadow_samples", [])),
+            "shadow_samples": [
+                sample.model_dump(mode="json")
+                for sample in list(getattr(ctx, "shadow_samples", []))[-500:]
+            ],
+        },
+        validation=build_validation_report().model_dump(mode="json"),
+        recording={
+            "enabled": recorder.enabled if recorder is not None else False,
+            "n_ticks": len(recorder) if recorder is not None else 0,
+            "maxlen": recorder.maxlen if recorder is not None else None,
+        },
+    )
+    return export.model_dump(mode="json")
 
 
 @router.get("/metrics")
@@ -335,9 +684,114 @@ async def metrics(request: Request) -> dict[str, Any]:
             discarded=funnel.get("discarded", 0),
             unwound=funnel.get("unwound", 0),
         ).model_dump(mode="json")
+        integrity = getattr(ctx, "integrity", None)
+        if integrity is not None:
+            snap_empty["integrity"] = integrity.reports()
         return snap_empty
     snap: dict[str, Any] = collector.snapshot(ctx.opp_counts).model_dump(mode="json")
+    integrity = getattr(ctx, "integrity", None)
+    if integrity is not None:
+        snap["integrity"] = integrity.reports()
     return snap
+
+
+@router.get("/strategies")
+async def strategies(request: Request) -> dict[str, Any]:
+    """Inventario de módulos de estrategia (PRD-008).
+
+    Las extensiones P3 son opt-in y read-only/demo al inicio; el flujo principal sigue siendo
+    `spatial` spot cross-exchange.
+    """
+    ctx = request.app.state.ctx
+    return {"strategies": [info.model_dump(mode="json") for info in _strategy_infos(ctx)]}
+
+
+@router.get("/strategies/triangular/opportunities")
+async def strategy_triangular_opportunities(request: Request) -> dict[str, Any]:
+    """Oportunidades triangulares intra-venue demo/replay (PRD-008)."""
+    from ...strategies import TriangularStrategy
+
+    ctx = request.app.state.ctx
+    strategy = TriangularStrategy(ctx.settings)
+    books = _strategy_books(ctx)
+    opportunities = strategy.find_opportunities(list(books.values()))
+    notes = []
+    if not strategy.enabled:
+        notes.append("strategy disabled by config")
+    if strategy.enabled and not opportunities:
+        notes.append("no three-leg cycle passed fee and depth validation")
+    return {
+        "strategy": strategy.id,
+        "enabled": strategy.enabled,
+        "mode": "demo_replay",
+        "opportunities": [opp.model_dump(mode="json") for opp in opportunities],
+        "notes": notes,
+    }
+
+
+@router.get("/strategies/funding/opportunities")
+async def strategy_funding_opportunities(request: Request) -> dict[str, Any]:
+    """Funding/basis read-only (PRD-008).
+
+    El repo todavía no ingiere funding rates live; la ruta existe para mantener el contrato
+    separado del P&L spot.
+    """
+    from ...strategies import FundingBasisStrategy
+
+    ctx = request.app.state.ctx
+    strategy = FundingBasisStrategy(ctx.settings)
+    return {
+        "strategy": strategy.id,
+        "enabled": strategy.enabled,
+        "mode": "read_only",
+        "opportunities": [],
+        "notes": [
+            "strategy disabled by config"
+            if not strategy.enabled
+            else "funding rates feed not configured; read-only contract only"
+        ],
+    }
+
+
+@router.get("/strategies/regional/mxn")
+async def strategy_regional_mxn(request: Request) -> dict[str, Any]:
+    """Corredor regional BTC/MXN experimental (PRD-008)."""
+    from ...strategies import RegionalMXNStrategy
+
+    ctx = request.app.state.ctx
+    strategy = RegionalMXNStrategy(ctx.settings)
+    notes = []
+    opportunities = []
+    fx = ctx.settings.strategy_mxn_usd_rate
+    if not strategy.enabled:
+        notes.append("strategy disabled by config")
+    elif fx is None:
+        notes.append("ARB_STRATEGY_MXN_USD_RATE is required")
+    else:
+        opportunities = [
+            opp.model_dump(mode="json")
+            for opp in strategy.find_opportunities(_strategy_books(ctx), usd_mxn=fx)
+        ]
+        if not opportunities:
+            notes.append("no BTC/MXN and BTC/USD books available")
+    return {
+        "strategy": strategy.id,
+        "enabled": strategy.enabled,
+        "mode": "experimental",
+        "usd_mxn": fx,
+        "opportunities": opportunities,
+        "notes": notes,
+    }
+
+
+@router.get("/integrity")
+async def integrity(request: Request) -> dict[str, Any]:
+    """Reportes enriquecidos de integridad por venue (PRD-004)."""
+    ctx = request.app.state.ctx
+    checker = getattr(ctx, "integrity", None)
+    if checker is None:
+        return {}
+    return cast(dict[str, Any], checker.reports())
 
 
 @router.get("/validation")
@@ -357,6 +811,28 @@ async def validation() -> dict[str, Any]:
     return validated
 
 
+@router.get("/calibration/survival")
+async def calibration_survival(
+    request: Request,
+    latency_ms: int = Query(default=100, ge=1, le=10_000),
+    observation_limit: int = Query(default=50, ge=0, le=500),
+) -> dict[str, Any]:
+    """Calibración observe-only de P_survive contra supervivencia observada (PRD-005)."""
+    from ...calibration import build_survival_report
+
+    ctx = request.app.state.ctx
+    recorder = getattr(ctx, "recorder", None)
+    ticks = recorder.ticks() if recorder is not None else []
+    report = build_survival_report(
+        list(getattr(ctx, "shadow_samples", [])),
+        ticks,
+        ctx.settings,
+        latency_ms=latency_ms,
+        observation_limit=observation_limit,
+    )
+    return report.model_dump(mode="json")
+
+
 @router.get("/projection")
 async def projection(
     request: Request, mode: Literal["demo", "live"] = Query(default="demo")
@@ -372,8 +848,11 @@ async def projection(
     ctx = request.app.state.ctx
     books = _live_projection_books(ctx) if mode == "live" else None
     settings = getattr(ctx, "settings", None)
-    result = build_frontier(settings, books, mode=mode)
-    return result.model_dump(mode="json")
+    cache_mode = "live" if mode == "live" and books is not None else "demo"
+    result = await _cached_projection(
+        f"frontier:{cache_mode}", partial(build_frontier, settings, books, mode=mode)
+    )
+    return cast(dict[str, Any], result.model_dump(mode="json"))
 
 
 @router.get("/capacity")
@@ -388,8 +867,11 @@ async def capacity(
     ctx = request.app.state.ctx
     books = _live_projection_books(ctx) if mode == "live" else None
     settings = getattr(ctx, "settings", None)
-    result = build_capacity_curve(settings, books, mode=mode)
-    return result.model_dump(mode="json")
+    cache_mode = "live" if mode == "live" and books is not None else "demo"
+    result = await _cached_projection(
+        f"capacity:{cache_mode}", partial(build_capacity_curve, settings, books, mode=mode)
+    )
+    return cast(dict[str, Any], result.model_dump(mode="json"))
 
 
 @router.get("/forward")
@@ -407,14 +889,23 @@ async def forward(
     from ...projection import build_forward_projection
 
     ctx = request.app.state.ctx
-    pnls = _backtest_trade_pnls(ctx)
-    if not pnls:
-        return ForwardResult(
-            available=False,
-            notes="Sin trades en la grabación: ejecuta el motor/backtest para poblar la muestra.",
-        ).model_dump(mode="json")
-    result = build_forward_projection(pnls, n_paths=n_paths, n_configs=n_configs)
-    return result.model_dump(mode="json")
+
+    # `_backtest_trade_pnls` corre un backtest/replay PESADO; debe ir dentro del cómputo
+    # cacheado+threadpool (antes corría en el event loop en cada request y lo congelaba).
+    def _compute_forward() -> ForwardResult:
+        pnls = _backtest_trade_pnls(ctx)
+        if not pnls:
+            return ForwardResult(
+                available=False,
+                notes=(
+                    "Sin trades en la grabación: ejecuta el motor/backtest "
+                    "para poblar la muestra."
+                ),
+            )
+        return build_forward_projection(pnls, n_paths=n_paths, n_configs=n_configs)
+
+    result = await _cached_projection(f"forward:{n_paths}:{n_configs}", _compute_forward)
+    return cast(dict[str, Any], result.model_dump(mode="json"))
 
 
 def _backtest_trade_pnls(ctx: Any) -> list[float]:

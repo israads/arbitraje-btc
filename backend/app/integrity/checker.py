@@ -1,83 +1,62 @@
-"""C2 — Integridad de order book por exchange (STORY-015, FR-020).
+"""C2/PRD-004 — Integridad de order book por exchange.
 
-ccxt.pro ya mantiene el libro internamente (aplica el `U/u`/nonce de Binance, el
-CRC32 de Kraken si se activa, y `sequence_num` + heartbeats de Coinbase). Esta capa
-añade una validación ESTRUCTURAL y de secuencia ANTES de aceptar cada RawOrderBook,
-para nunca alimentar al motor con un libro corrupto:
-
-  - lado no vacío (hay bids y asks),
-  - precios y cantidades estrictamente positivos,
-  - niveles ordenados (bids desc, asks asc),
-  - libro no cruzado (mejor bid no supera al mejor ask; `==` locked se tolera),
-  - secuencia (`seq`/nonce) monótona no decreciente por venue (descarta updates
-    fuera de orden / duplicados viejos).
-
-Un libro inválido se DESCARTA (no actualiza el estado vivo) y se contabiliza por
-venue para exponerlo en `/health`. Es complementario al watchdog (C8): integridad =
-correctitud estructural; watchdog = frescura temporal.
+La capa genérica bloquea libros estructuralmente corruptos. Los validadores específicos
+reportan gaps/checksum por venue y, por defecto (`integrity_mode=warn`), observan sin bloquear
+para evitar falsos rechazos mientras confirmamos qué metadata expone ccxt.pro en vivo.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from ..models.market import RawOrderBook
-
-
-@dataclass
-class IntegrityReport:
-    """Estadísticas de integridad acumuladas para un venue."""
-
-    accepted: int = 0
-    rejected: int = 0
-    last_reason: str | None = None
-    last_seq: int | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "accepted": self.accepted,
-            "rejected": self.rejected,
-            "last_reason": self.last_reason,
-        }
+from .models import IntegrityDecision, IntegrityMode, IntegrityReport
+from .validators import VALIDATORS, GenericIntegrityValidator, structural_integrity_reason
 
 
 def integrity_reason(raw: RawOrderBook, last_seq: int | None) -> str | None:
-    """Motivo de rechazo del libro, o None si es íntegro. Pura, testeable."""
-    bids, asks = raw.bids, raw.asks
-    if not bids or not asks:
-        return "empty_side"
-    for side in (bids, asks):
-        for px, qty in side:
-            if px <= 0 or qty <= 0:
-                return "nonpositive"
-    if any(bids[i][0] < bids[i + 1][0] for i in range(len(bids) - 1)):
-        return "bids_unsorted"
-    if any(asks[i][0] > asks[i + 1][0] for i in range(len(asks) - 1)):
-        return "asks_unsorted"
-    if bids[0][0] > asks[0][0]:
-        return "crossed_book"
-    if last_seq is not None and raw.seq is not None and raw.seq < last_seq:
-        return "seq_regression"
-    return None
+    """Compatibilidad con STORY-015: motivo genérico de rechazo, o None."""
+    return structural_integrity_reason(raw, last_seq)
 
 
 class BookIntegrityChecker:
-    """Valida RawOrderBook por venue; mantiene la última secuencia y estadísticas."""
+    """Valida RawOrderBook por venue; mantiene secuencia y estadísticas enriquecidas."""
 
-    def __init__(self) -> None:
+    def __init__(self, mode: IntegrityMode = "warn") -> None:
+        self.mode = mode
+        self._generic = GenericIntegrityValidator()
         self._reports: dict[str, IntegrityReport] = {}
 
+    def _validator_for(self, exchange: str) -> Any:
+        if self.mode == "generic":
+            return self._generic
+        return VALIDATORS.get(exchange, self._generic)
+
     def check(self, raw: RawOrderBook) -> bool:
-        """True si el libro es íntegro (y debe aceptarse); False si se descarta."""
+        """True si el libro puede entrar al estado vivo; False si debe descartarse."""
         rep = self._reports.setdefault(raw.exchange, IntegrityReport())
-        reason = integrity_reason(raw, rep.last_seq)
-        if reason is not None:
+        validator = self._validator_for(raw.exchange)
+        decision: IntegrityDecision = validator.check(raw, rep)
+        rep.validator = decision.validator
+        if decision.reason == "sequence_gap":
+            rep.sequence_gaps += 1
+        if decision.reason == "checksum_failure":
+            rep.checksum_failures += 1
+        if decision.checksum is not None:
+            rep.last_checksum = decision.checksum
+
+        should_block = (not decision.accepted) and (
+            decision.severity == "error" or self.mode == "enforce"
+        )
+        if should_block:
             rep.rejected += 1
-            rep.last_reason = reason
+            rep.last_reason = decision.reason
             return False
+
         rep.accepted += 1
-        if raw.seq is not None:
-            rep.last_seq = raw.seq
+        rep.last_reason = decision.reason
+        if decision.seq is not None:
+            rep.last_seq = decision.seq
+        rep.last_valid_at = raw.ts_recv_monotonic
         return True
 
     def reports(self) -> dict[str, dict[str, Any]]:

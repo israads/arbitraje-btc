@@ -35,6 +35,64 @@ export interface Opportunity {
   status: string;
   discard_reason: string | null;
   latency_ms: number | null;
+  legs?: StrategyLeg[] | null;
+  strategy_payload?: Record<string, unknown>;
+}
+
+export interface StrategyLeg {
+  venue: string;
+  symbol: string;
+  side: 'buy' | 'sell' | 'funding' | 'fx';
+  asset_in: string;
+  asset_out: string;
+  qty_in: number;
+  qty_out: number;
+  price: number | null;
+  fee: number;
+  fee_rate: number;
+}
+
+export interface StrategyInfo {
+  id: string;
+  enabled: boolean;
+  mode: 'primary' | 'adapter' | 'demo_replay' | 'read_only' | 'experimental';
+  description: string;
+}
+
+export interface CostComponent {
+  key: string;
+  label: string;
+  usd: number | null;
+  per_btc: number | null;
+}
+
+export interface OpportunityExplanation {
+  id: string;
+  route: {
+    symbol: string;
+    buy_venue: string;
+    sell_venue: string;
+  };
+  q_target: number;
+  naive: {
+    buy_price: number | null;
+    sell_price: number | null;
+    spread_usd_per_btc: number | null;
+    gross_usd: number | null;
+    would_trade: boolean;
+  };
+  engine: {
+    status: string;
+    reason: string | null;
+    net_usd: number | null;
+    net_per_btc: number | null;
+    dominant_cost: string | null;
+    trades: boolean;
+  };
+  breakdown: CostComponent[];
+  peg: Record<string, number | string | null>;
+  timestamps: Record<string, number | null>;
+  notes: string[];
 }
 
 export interface StageLatency {
@@ -54,6 +112,8 @@ export interface Metrics {
   unwound: number;
   discard_reasons: Record<string, number>;
   by_strategy: Record<string, Record<string, number>>;
+  preflight_results?: Record<string, Record<string, number>>;
+  test_order_results?: Record<string, Record<string, number>>;
   detect_latency: StageLatency | null;
   exec_latency: StageLatency | null;
   p50_ms: number | null;
@@ -68,6 +128,17 @@ export interface Metrics {
   opp_lifetime_buckets_ms: number[];
   opp_lifetime_p50_ms: number | null;
   opp_lifetime_p99_ms: number | null;
+  integrity?: Record<string, {
+    validator: string;
+    accepted: number;
+    rejected: number;
+    last_reason: string | null;
+    last_seq: number | null;
+    last_checksum: string | null;
+    checksum_failures: number;
+    sequence_gaps: number;
+    last_valid_at: number | null;
+  }>;
 }
 
 export interface BreakerState {
@@ -90,6 +161,10 @@ export interface DemoStatus {
   badge: string | null;
   since: number | null;
   n_replay_ticks?: number;
+  scenario?: string | null;
+  scenario_description?: string | null;
+  scenario_index?: number;
+  n_scenarios?: number;
 }
 
 export interface Pnl {
@@ -203,11 +278,39 @@ export interface ForwardProjection {
   notes: string;
 }
 
+export interface SurvivalCalibrationBucket {
+  p_low: number;
+  p_high: number;
+  n: number;
+  estimated_mid: number;
+  observed_rate: number | null;
+  abs_error: number | null;
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export interface SurvivalCalibration {
+  mode: string;
+  latency_ms: number;
+  n_samples: number;
+  n_observed: number;
+  n_missing: number;
+  confidence: 'low' | 'medium' | 'high';
+  buckets: SurvivalCalibrationBucket[];
+  observations: {
+    opportunity_id: string;
+    latency_ms: number;
+    observed: boolean | null;
+    future_net_usd: number | null;
+    reason: string | null;
+  }[];
+}
+
 /** Estadística acumulada por ruta (buy→sell) durante toda la sesión, no solo el buffer. */
 export interface RouteStat {
   route: string;
   buy_venue: string;
   sell_venue: string;
+  lastOpportunityId: string | null;
   detected: number;
   viable: number; // viable + executable + captured
   captured: number;
@@ -263,6 +366,7 @@ export function useStream() {
   const [projection, setProjection] = useState<EdgeFrontier | null>(null);
   const [capacity, setCapacity] = useState<EdgeCapacity | null>(null);
   const [forward, setForward] = useState<ForwardProjection | null>(null);
+  const [survival, setSurvival] = useState<SurvivalCalibration | null>(null);
 
   const quotesBuf = useRef<Record<string, Quote>>({});
   const oppsBuf = useRef<Opportunity[]>([]);
@@ -292,8 +396,11 @@ export function useStream() {
     fetchJson<EdgeCapacity>(`${API_BASE}/api/v1/capacity?mode=live`)
       .then(setCapacity)
       .catch(() => undefined);
-    fetchJson<ForwardProjection>(`${API_BASE}/api/v1/forward?n_paths=4000`)
+    fetchJson<ForwardProjection>(`${API_BASE}/api/v1/forward?n_paths=2000`)
       .then(setForward)
+      .catch(() => undefined);
+    fetchJson<SurvivalCalibration>(`${API_BASE}/api/v1/calibration/survival?latency_ms=100`)
+      .then(setSurvival)
       .catch(() => undefined);
 
     const es = new EventSource(`${API_BASE}/api/v1/stream`);
@@ -328,6 +435,7 @@ export function useStream() {
         route: key,
         buy_venue: o.buy_venue,
         sell_venue: o.sell_venue,
+        lastOpportunityId: null,
         detected: 0,
         viable: 0,
         captured: 0,
@@ -347,6 +455,7 @@ export function useStream() {
       s.lastStatus = o.status;
       s.lastReason = o.discard_reason;
       s.lastLatencyMs = o.latency_ms;
+      s.lastOpportunityId = o.id;
       routeStatsRef.current.set(key, s);
       dirty.current = true;
     });
@@ -396,30 +505,39 @@ export function useStream() {
     const ac = new AbortController();
     // P&L, breakers y demo llegan por SSE (push). Este pull es sólo BACKSTOP de baja
     // frecuencia: estado inicial antes del primer evento + resync si se perdió un push.
-    const pull = () => {
+    const pullLight = () => {
       const opt = { signal: ac.signal };
       fetchJson<Pnl>(`${API_BASE}/api/v1/pnl`, opt).then(setPnl).catch(() => undefined);
       fetchJson<BreakerStatus>(`${API_BASE}/api/v1/control/status`, opt).then(setBreakers).catch(() => undefined);
       fetchJson<DemoStatus>(`${API_BASE}/api/v1/demo`, opt).then(setDemo).catch(() => undefined);
-      // Proyección viva: la frontier/capacity dependen del book actual (el backend cae a demo
-      // sin ruta viva); forward re-muestrea la grabación. Fallos no rompen el resto.
+    };
+    // Proyección viva: la frontier/capacity dependen del book actual (el backend cae a demo
+    // sin ruta viva); forward re-muestrea la grabación. Fallos no rompen el resto.
+    // Cómputo numpy/Monte Carlo pesado ⇒ refresco espaciado (no a 5s) para no saturar el
+    // único worker del backend en 2 cores; n_paths moderado.
+    const pullHeavy = () => {
+      const opt = { signal: ac.signal };
       fetchJson<EdgeFrontier>(`${API_BASE}/api/v1/projection?mode=live`, opt).then(setProjection).catch(() => undefined);
       fetchJson<EdgeCapacity>(`${API_BASE}/api/v1/capacity?mode=live`, opt).then(setCapacity).catch(() => undefined);
-      fetchJson<ForwardProjection>(`${API_BASE}/api/v1/forward?n_paths=4000`, opt).then(setForward).catch(() => undefined);
+      fetchJson<ForwardProjection>(`${API_BASE}/api/v1/forward?n_paths=2000`, opt).then(setForward).catch(() => undefined);
+      fetchJson<SurvivalCalibration>(`${API_BASE}/api/v1/calibration/survival?latency_ms=100`, opt).then(setSurvival).catch(() => undefined);
     };
-    pull();
-    const poll = setInterval(pull, 5000);
+    pullLight();
+    pullHeavy();
+    const pollLight = setInterval(pullLight, 5000);
+    const pollHeavy = setInterval(pullHeavy, 30000);
 
     return () => {
       ac.abort();
       es.close();
       cancelAnimationFrame(raf);
-      clearInterval(poll);
+      clearInterval(pollLight);
+      clearInterval(pollHeavy);
     };
   }, []);
 
   return {
     status, quotes, opportunities, routeStats, detectedCount,
-    metrics, breakers, demo, pnl, validation, projection, capacity, forward,
+    metrics, breakers, demo, pnl, validation, projection, capacity, forward, survival,
   };
 }

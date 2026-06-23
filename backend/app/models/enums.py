@@ -7,7 +7,9 @@ from enum import StrEnum
 class Strategy(StrEnum):
     spatial = "spatial"
     stat_z = "stat_z"
-    # stretch (FR-019): triangular = "triangular"
+    triangular = "triangular"
+    funding_basis = "funding_basis"
+    regional_mxn = "regional_mxn"
 
 
 class OpportunityStatus(StrEnum):

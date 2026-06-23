@@ -8,7 +8,7 @@
   <a href="#quickstart"><img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white"></a>
   <a href="#frontend"><img alt="Next.js" src="https://img.shields.io/badge/Next.js-14-111111?style=for-the-badge&logo=nextdotjs&logoColor=white"></a>
   <a href="#calidad"><img alt="Tests" src="https://img.shields.io/badge/tests-425%20passing-16D67F?style=for-the-badge"></a>
-  <a href="#calidad"><img alt="Coverage" src="https://img.shields.io/badge/coverage-93.38%25-16D67F?style=for-the-badge"></a>
+  <a href="#calidad"><img alt="Coverage" src="https://img.shields.io/badge/coverage-92.45%25-16D67F?style=for-the-badge"></a>
 </p>
 
 <p align="center">
@@ -104,10 +104,18 @@ Si sólo hay unos minutos para revisar el proyecto, esta es la ruta sugerida:
 3. Revisar la **Capacity Curve**: explica por qué más capital no siempre mejora el resultado.
 4. Revisar el **Forward Fan Chart**: comunica incertidumbre y no vende una curva falsa.
 5. Revisar el **Embudo**: cada descarte tiene motivo técnico, no desaparece del sistema.
-6. Ejecutar tests: `425 passed`, cobertura `93.38%`.
+6. Ejecutar tests: `481 passed`.
 
 Lo más importante no es que aparezcan oportunidades verdes; es que el sistema sea capaz de decir
 con precisión cuándo una oportunidad aparente **no debe operarse**.
+
+Documentación nueva para evaluación y mejora:
+
+- [`docs/guion-demo-jurado.md`](docs/guion-demo-jurado.md): demo de 90 segundos, demo técnica de 5 minutos y preguntas esperadas.
+- [`docs/investigacion-y-roadmap.md`](docs/investigacion-y-roadmap.md): investigación de competidores, open source, papers y backlog priorizado.
+- [`docs/prd/README.md`](docs/prd/README.md): PRDs ejecutables para implementar el siguiente salto del proyecto.
+- [`docs/architecture/README.md`](docs/architecture/README.md): arquitectura técnica de implementación por PRD.
+- [`docs/execution/README.md`](docs/execution/README.md): plan de ejecución, work breakdown y quality gates.
 
 ---
 
@@ -229,6 +237,7 @@ flowchart LR
 | Riesgo | `app/risk` | Staleness, volatilidad, skew, drawdown, kill switch. |
 | Backtest | `app/backtest` | Record & replay point-in-time. |
 | Métricas | `app/metrics` | Latencia, embudo, microestructura, lifetime. |
+| Estrategias | `app/strategies` | Módulos opt-in para triangular, funding y MXN sin mezclar riesgos. |
 | API/Stream | `app/api`, `app/stream` | REST + SSE al frontend. |
 
 ---
@@ -309,10 +318,15 @@ Backend base: `http://localhost:8000`
 | Endpoint | Descripción |
 |---|---|
 | `GET /health` | Estado del servicio. |
+| `GET /metrics` | Métricas Prometheus para operación/scraping. |
 | `GET /api/v1/stream` | SSE: quotes, opportunities, metrics, pnl, breakers. |
 | `GET /api/v1/quotes` | Snapshot normalizado por exchange. |
 | `GET /api/v1/opportunities` | Oportunidades recientes y funnel. |
 | `GET /api/v1/metrics` | Latencia, microestructura, lifetime, ratios. |
+| `GET /api/v1/strategies` | Inventario de módulos de estrategia y flags. |
+| `GET /api/v1/strategies/triangular/opportunities` | Triangular demo/replay, desactivado por defecto. |
+| `GET /api/v1/strategies/funding/opportunities` | Funding/basis read-only, separado de P&L spot. |
+| `GET /api/v1/strategies/regional/mxn` | Comparación BTC/MXN con FX explícito. |
 | `GET /api/v1/validation` | Reconciliación e invariantes económicas. |
 | `GET /api/v1/projection?mode=demo\|live` | Break-even Frontier v2. |
 | `GET /api/v1/capacity?mode=demo\|live` | Capacity Curve. |
@@ -399,6 +413,10 @@ Variables relevantes:
 | `ARB_MAX_SLIPPAGE` | Filtro pre-trade de slippage. |
 | `ARB_PEG_TOLERANCE` | Tolerancia de desviación stable/USD. |
 | `ARB_EXPECTED_TRADES_PER_REBALANCE` | Amortización del coste fijo de rebalanceo. |
+| `ARB_STRATEGY_TRIANGULAR_ENABLED` | Activa triangular demo/replay. Default `false`. |
+| `ARB_STRATEGY_FUNDING_ENABLED` | Activa funding/basis read-only. Default `false`. |
+| `ARB_STRATEGY_REGIONAL_MXN_ENABLED` | Activa MXN experimental. Default `false`. |
+| `ARB_STRATEGY_MXN_USD_RATE` | FX USD/MXN requerido para regional MXN. |
 | `ARB_DB_URL` | SQLite/Postgres async. |
 
 ---
@@ -453,13 +471,13 @@ Estado verificado:
 
 | Gate | Resultado |
 |---|---|
-| Backend tests | `425 passed` |
-| Cobertura | `93.38%` |
+| Backend tests | `481 passed` |
+| Cobertura | `92.45%` (`--cov-fail-under=85`) |
 | Ruff | limpio |
 | Mypy strict | limpio |
 | Frontend typecheck | limpio |
 | Next lint | limpio |
-| Next build | OK |
+| Next build | limpio |
 
 Warning conocido:
 
@@ -605,6 +623,7 @@ Implementado:
 - record & replay point-in-time
 - métricas de latencia, microestructura y lifetime
 - Projection Suite v2
+- módulos PRD-008 opt-in para triangular, funding/basis y MXN
 - dashboard en tiempo real
 - validación determinista e invariantes
 

@@ -5,7 +5,7 @@ Estado de feeds/conexiones/breakers se irá enriqueciendo en STORY-014/018.
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Request
 
@@ -13,6 +13,20 @@ from ..models.enums import ConnectionStatus
 from ..risk.watchdog import is_stale
 
 router = APIRouter(tags=["ops"])
+
+
+def _operational_mode(ctx: Any) -> str:
+    settings = ctx.settings
+    demo = ctx.demo.status() if ctx.demo else {"active": False, "mode": "auto", "source": "live"}
+    if demo.get("active"):
+        if demo.get("mode") == "jury" or demo.get("source") == "deterministic":
+            return "demo"
+        return "replay"
+    if settings.execution_mode == "testnet":
+        return "testnet"
+    if settings.execution_mode == "disabled":
+        return "live_readonly"
+    return cast(str, settings.execution_mode)
 
 
 @router.get("/health")
@@ -61,6 +75,10 @@ async def health(request: Request) -> dict[str, Any]:
         "app": s.app_name,
         "env": s.env,
         "version": request.app.version,
+        "mode": _operational_mode(ctx),
+        "execution_enabled": s.execution_mode != "disabled",
+        "test_orders_enabled": s.execution_mode == "testnet" and s.enable_test_orders,
+        "control_token_required": bool(s.control_token),
         "exchanges": [e.id for e in s.enabled_exchanges],
         "peg": ctx.peg.snapshot() if ctx.peg else {},
         "feeds": feeds,

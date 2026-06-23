@@ -1,9 +1,13 @@
 """Oportunidad de arbitraje — alimenta el embudo (detected→viable→...→captured)."""
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 from .enums import DiscardReason, OpportunityStatus, Strategy
+from .explain import OpportunityExplanation
+from .strategy import OpportunityLeg
 
 
 class Opportunity(BaseModel):
@@ -25,3 +29,6 @@ class Opportunity(BaseModel):
     t_recv: float | None = None       # monotónico (ingesta)
     t_detect: float | None = None     # monotónico (motor)
     latency_ms: float | None = None   # t_detect - t_recv
+    legs: list[OpportunityLeg] | None = None
+    strategy_payload: dict[str, Any] = Field(default_factory=dict)
+    explanation: OpportunityExplanation | None = Field(default=None, exclude=True)

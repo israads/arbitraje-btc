@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from app.backtest import Recorder
 from app.config import get_settings
-from app.demo import DemoFallback
+from app.demo import DemoFallback, JuryScenarioPlayer
+from app.engine.explain import build_opportunity_explanation
+from app.models.enums import OpportunityStatus, Strategy
 from app.models.market import NormalizedBook
+from app.models.opportunity import Opportunity
 from app.state import AppState
 from app.stream.hub import StreamHub
 
@@ -116,6 +119,33 @@ def test_modo_off_nunca_replay():
     assert sink == []
 
 
+def test_modo_jury_inyecta_escenarios_deterministas():
+    sink: list[NormalizedBook] = []
+    fb = _fallback(_settings(), _seed_recorder(), sink)
+    fb.set_mode("jury")
+    fb.tick(now=100.0)
+    st = fb.status()
+    assert fb.active is True
+    assert st["source"] == "deterministic"
+    assert st["scenario"] == "good_edge"
+    assert st["scenario_index"] == 1
+    assert st["n_scenarios"] == 5
+    assert len(sink) == 2
+
+
+def test_jury_player_cycles_all_required_scenarios():
+    player = JuryScenarioPlayer(repeats_per_scenario=1)
+    names = [player.next_frame().scenario.name for _ in range(6)]
+    assert names[:5] == [
+        "good_edge",
+        "naive_trap",
+        "peg_adverse",
+        "stale_feed",
+        "latency_decay",
+    ]
+    assert names[5] == "good_edge"
+
+
 # ---- inyección re-sellada (fresca) ----
 
 def test_inyeccion_resella_ts_fresco():
@@ -204,6 +234,50 @@ def test_endpoint_demo_set_mode(client):
     assert r.json()["mode"] == "on"
     r2 = client.post("/api/v1/demo?mode=invalid")
     assert r2.status_code == 422
+
+
+def test_endpoint_demo_set_jury_mode(client):
+    r = client.post("/api/v1/demo?mode=jury")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mode"] == "jury"
+    assert body["source"] == "deterministic"
+    assert body["scenario"] == "good_edge"
+    assert body["n_scenarios"] == 5
+
+
+def test_session_export_contains_sections_and_redacts_settings(client):
+    ctx = client.app.state.ctx
+    buy = _nb("bitstamp", bid=99.0, ask=100.0)
+    sell = _nb("kraken", bid=103.0, ask=104.0)
+    opp = Opportunity(
+        id="export-opp",
+        strategy=Strategy.spatial,
+        symbol="BTC/USD",
+        buy_venue="bitstamp",
+        sell_venue="kraken",
+        q_target=1.0,
+        vwap_buy=100.0,
+        vwap_sell=103.0,
+        status=OpportunityStatus.viable,
+        t_recv=1.0,
+        t_detect=1.0,
+    )
+    opp.explanation = build_opportunity_explanation(opp, buy, sell, ctx.settings)
+    ctx.latest_norm[buy.exchange] = buy
+    ctx.latest_norm[sell.exchange] = sell
+    ctx.record_opportunity(opp)
+
+    r = client.get("/api/v1/session/export")
+    assert r.status_code == 200
+    body = r.json()
+    assert {"metadata", "settings", "quotes", "opportunities", "metrics", "demo"} <= set(body)
+    assert "control_token" not in body["settings"]
+    assert "db_url" not in body["settings"]
+    assert "calibration" in body
+    assert "shadow_samples" in body["calibration"]
+    assert body["opportunities"][0]["id"] == "export-opp"
+    assert body["opportunities"][0]["explanation"]["id"] == "export-opp"
 
 
 def test_health_incluye_demo(client):

@@ -289,6 +289,16 @@ def test_snapshot_vacio_es_honesto():
     assert snap.exec_latency is None
 
 
+def test_preflight_and_test_order_counters_are_bounded():
+    c = MetricsCollector(_settings())
+    c.record_preflight("Binance", "accepted")
+    c.record_preflight("binance", "rejected")
+    c.record_test_order("binance", "accepted_test")
+    snap = c.snapshot({})
+    assert snap.preflight_results["binance"] == {"accepted": 1, "rejected": 1}
+    assert snap.test_order_results["binance"] == {"accepted_test": 1}
+
+
 # ---- endpoint /metrics (integración, autostart off) ----
 
 def test_endpoint_metrics_autostart_off(client):
@@ -300,3 +310,4 @@ def test_endpoint_metrics_autostart_off(client):
     assert body["effective_spread"] is None
     assert body["capture_ratio"] is None
     assert "opp_lifetime_buckets_ms" in body
+    assert "preflight_results" in body and "test_order_results" in body

@@ -1,7 +1,7 @@
 'use client';
 
 import { Badge, Button, Card, Group, SegmentedControl, Stack, Text } from '@mantine/core';
-import { IconBolt, IconPlayerPlay, IconShieldHalf } from '@tabler/icons-react';
+import { IconBolt, IconDownload, IconPlayerPlay, IconShieldHalf } from '@tabler/icons-react';
 import { useState } from 'react';
 import { API_BASE } from '../lib/config';
 import type { BreakerStatus, DemoStatus } from '../hooks/useStream';
@@ -30,6 +30,30 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
       await fetch(`${API_BASE}/api/v1/${path}`, { method: 'POST' });
     } catch {
       /* el estado real llega por SSE/polling; un fallo de red no rompe la UI */
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportSession = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/session/export`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.href = url;
+      a.download = `arbitraje-session-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* el export es auxiliar; si falla no bloquea la operación */
     } finally {
       setBusy(false);
     }
@@ -85,15 +109,28 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
             data={[
               { label: 'Auto', value: 'auto' },
               { label: 'Replay', value: 'on' },
+              { label: 'Jury', value: 'jury' },
               { label: 'Off', value: 'off' },
             ]}
           />
           {demo.active && (
             <Badge color="orange" variant="light" mt="xs" fullWidth>
-              DEMO DATA · {demo.n_replay_ticks ?? 0} ticks
+              {demo.mode === 'jury' && demo.scenario
+                ? `JURY · ${demo.scenario_index ?? 0}/${demo.n_scenarios ?? 0} · ${demo.scenario}`
+                : `DEMO DATA · ${demo.n_replay_ticks ?? 0} ticks`}
             </Badge>
           )}
         </div>
+
+        <Button
+          variant="light"
+          color="gray"
+          leftSection={<IconDownload size={16} />}
+          loading={busy}
+          onClick={exportSession}
+        >
+          Export session
+        </Button>
 
         <div>
           <Text size="xs" tt="uppercase" fw={600} c="dimmed" mb={6} style={{ letterSpacing: 0 }}>

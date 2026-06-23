@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from .integrity.checker import BookIntegrityChecker
     from .metrics import MetricsCollector
     from .models.backtest import BacktestResult
+    from .models.calibration import ShadowOpportunitySample
     from .normalize import Normalizer, PegIngestor, PegProvider
     from .risk.breakers import BreakerManager
     from .sim import ExecutionSimulator, Portfolio
@@ -74,6 +75,11 @@ class AppState:
     # Embudo de oportunidades (C13 lo formaliza) + buffer de las recientes.
     opp_counts: dict[str, int] = field(default_factory=_empty_funnel)
     recent_opps: deque[Opportunity] = field(default_factory=lambda: deque(maxlen=200))
+    opps_by_id: dict[str, Opportunity] = field(default_factory=dict)
+    shadow_samples: deque[ShadowOpportunitySample] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.shadow_samples = deque(maxlen=self.settings.shadow_sample_maxlen)
 
     def record_opportunity(self, opp: Opportunity) -> None:
         """Registra una oportunidad en el embudo (C13) y el buffer de recientes.
@@ -90,3 +96,12 @@ class AppState:
                 self.opp_counts.get(opp.status.value, 0) + 1
             )
         self.recent_opps.append(opp)
+        self.opps_by_id[opp.id] = opp
+        max_recent = self.recent_opps.maxlen or 200
+        if len(self.opps_by_id) > max_recent * 2:
+            live_ids = {o.id for o in self.recent_opps}
+            self.opps_by_id = {oid: o for oid, o in self.opps_by_id.items() if oid in live_ids}
+
+    def record_shadow_sample(self, sample: ShadowOpportunitySample) -> None:
+        """Registra muestra shadow para calibración observe-only (PRD-005)."""
+        self.shadow_samples.append(sample)

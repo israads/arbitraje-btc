@@ -25,7 +25,8 @@ from __future__ import annotations
 import math
 
 from app.config import Settings, get_settings
-from app.engine.cost_model import compute_net
+from app.engine.cost_model import compute_net_from_curves
+from app.engine.depth_curve import DepthCurve
 from app.models.market import NormalizedBook
 from app.models.projection import CapacityPoint, CapacityResult
 from app.projection.frontier import (
@@ -160,13 +161,15 @@ def build_capacity_curve(
     )
 
     q_grid = [cap * _Q_MIN_FRAC * i for i in range(1, _N_POINTS + 1)]
+    ask_curve = DepthCurve.from_levels(buy_asks, "ask")
+    bid_curve = DepthCurve.from_levels(sell_bids, "bid")
 
     prev_q: float | None = None
     prev_edge: float | None = None
     for q in q_grid:
-        nb = compute_net(
-            buy_asks,
-            sell_bids,
+        nb = compute_net_from_curves(
+            ask_curve,
+            bid_curve,
             q,
             fee_buy=resolved_fee,
             fee_sell=resolved_fee,

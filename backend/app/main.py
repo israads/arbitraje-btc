@@ -12,20 +12,21 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.health import router as health_router
 from .api.v1.router import router as v1_router
 from .backtest import Recorder
 from .bus import BoundedQueue
+from .calibration import build_shadow_sample
 from .config import Settings, get_settings
 from .demo import DemoFallback
 from .engine import NetEvaluator, Prioritizer, SpatialDetector, StatZDetector, run_engine
 from .ingest import build_ingestors, run_ingestors
 from .integrity.checker import BookIntegrityChecker
 from .logging_config import configure_logging
-from .metrics import MetricsCollector
+from .metrics import MetricsCollector, render_prometheus
 from .models.enums import DiscardReason, OpportunityStatus
 from .models.market import NormalizedBook, RawOrderBook
 from .models.opportunity import Opportunity
@@ -57,7 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # C3 — peg + normalizador (STORY-003); C4 bus + C5 detector (STORY-004).
     ctx.peg = PegProvider(target=settings.quote_target, tolerance=settings.peg_tolerance)
     ctx.normalizer = Normalizer(ctx.peg)
-    ctx.integrity = BookIntegrityChecker()  # C2 — integridad de book (STORY-015)
+    ctx.integrity = BookIntegrityChecker(settings.integrity_mode)  # C2/PRD-004
     ctx.bus = BoundedQueue(settings.bus_maxsize)
     ctx.detector = SpatialDetector(settings)
     ctx.stat_detector = StatZDetector(settings)  # C5 — arbitraje estadístico z-score (STORY-019)
@@ -176,6 +177,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 if ctx.writer is not None:
                     ctx.writer.enqueue_execution(execution)
         publisher.publish_opportunity(opp)  # C11 → SSE (STORY-005)
+        # PRD-005: sample shadow observe-only. Se captura con el estado FINAL de la opp y
+        # libros presentes; la supervivencia futura se calcula sólo bajo demanda.
+        books_for_sample = (
+            ctx.detector.books
+            if ctx.detector is not None and ctx.detector.books
+            else ctx.latest_norm
+        )
+        demo = getattr(ctx, "demo", None)
+        source = "live"
+        if demo is not None:
+            demo_status = demo.status()
+            if demo_status.get("active"):
+                source = str(demo_status.get("source") or "demo")
+        ctx.record_shadow_sample(
+            build_shadow_sample(opp, books_for_sample, settings, source=source)
+        )
         # C13 (STORY-022): registra la opp con su estado FINAL del tick (tras todos los gates)
         # en latencia/microestructura/lifetime/desgloses, y empuja el snapshot por SSE (THROTTLED
         # — no en cada opp). El embudo (conteos) sigue siendo `opp_counts` (fuente única).
@@ -219,6 +236,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     def on_book(book: RawOrderBook) -> None:
         if ctx.integrity is not None and not ctx.integrity.check(book):
             return  # C2 (STORY-015): libro corrupto → no entra al estado vivo
+        if ctx.demo is not None and ctx.demo.is_jury_mode:
+            return  # PRD-002: la demo de jurado es determinista; no mezclar ticks live.
         ctx.latest_books[book.exchange] = book
         nb = ctx.normalizer.normalize(book) if ctx.normalizer else None
         if nb is not None:
@@ -299,6 +318,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.get("/metrics", include_in_schema=False)
+    async def prometheus_metrics(request: Request) -> Response:
+        return Response(
+            render_prometheus(request.app.state.ctx),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+
     app.include_router(health_router)
     app.include_router(v1_router, prefix="/api/v1")
     return app

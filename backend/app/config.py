@@ -7,6 +7,7 @@ o archivo `.env`. Nested vía `__` (p.ej. `ARB_EXCHANGES__BINANCE__FEE_TAKER=0.0
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -174,16 +175,53 @@ class Settings(BaseSettings):
     # drift. NO por trade — evento periódico que sólo actúa si el skew supera el límite.
     rebalance_interval_ms: int = Field(default=30_000, gt=0)
 
+    # --- Integridad de book por exchange (PRD-004) ---
+    # generic: sólo estructura/seq genérica. warn: reporta gaps/checksum por venue sin bloquear.
+    # enforce: bloquea también los fallos específicos por venue.
+    integrity_mode: Literal["generic", "warn", "enforce"] = "warn"
+
     # --- Fallback a replay para demo (C16, FR-018, STORY-024) ---
     demo_fallback_enabled: bool = True       # arma el controlador en el lifespan
     demo_stale_ms: int = Field(default=2_000, gt=0)  # sin dato real > esto → activa replay
     demo_replay_interval_ms: int = Field(default=50, gt=0)  # cadencia de inyección de ticks
     demo_recording_path: str = ""            # JSONL de respaldo si el buffer vivo está vacío
 
+    # --- Ejecución protegida / testnet (PRD-003) ---
+    # Default agresivamente seguro: ninguna ruta de ejecución queda activa sin opt-in explícito.
+    execution_mode: Literal["disabled", "dry_run", "testnet"] = "disabled"
+    enable_test_orders: bool = False
+    execution_request_timeout_s: float = Field(default=5.0, gt=0.0)
+    binance_testnet_api_key: str = ""
+    binance_testnet_api_secret: str = ""
+    binance_testnet_base_url: str = "https://testnet.binance.vision"
+    # Balance local usado por el adapter determinista de testnet/dry_run. No representa dinero
+    # real; sirve para probar min-notional/lot/balance sin tocar red ni credenciales.
+    execution_local_btc_balance: float = Field(default=1.0, ge=0.0)
+    execution_local_quote_balance_usd: float = Field(default=100_000.0, ge=0.0)
+
     # --- Métricas del jurado (C13, FR-017, NFR-001/010, STORY-022) ---
     metrics_window: int = Field(default=2_000, gt=0)   # muestras por métrica en ventana
     lifetime_gap_ms: int = Field(default=250, gt=0)    # gap que cierra un episodio de cruce
     metrics_emit_ms: int = Field(default=1_000, gt=0)  # cadencia máx. del push SSE de métricas
+
+    # --- Extensiones de mercado (PRD-008) ---
+    # Opt-in explícito: el flujo principal spot cross-exchange sigue siendo la demo primaria.
+    strategy_triangular_enabled: bool = False
+    strategy_triangular_start_currency: str = "USD"
+    strategy_triangular_trade_size: float = Field(default=1_000.0, gt=0.0)
+    strategy_triangular_min_profit_bps: float = Field(default=0.0, ge=0.0)
+    strategy_funding_enabled: bool = False
+    strategy_funding_hedge_cost_bps: float = Field(default=0.0, ge=0.0)
+    strategy_regional_mxn_enabled: bool = False
+    strategy_mxn_usd_rate: float | None = Field(default=None, gt=0.0)
+    strategy_mxn_fiat_fee_bps: float = Field(default=20.0, ge=0.0)
+
+    # --- Calibración de supervivencia (PRD-005) ---
+    calibration_mode: Literal["observe_only", "report", "score", "gate"] = "observe_only"
+    shadow_sample_maxlen: int = Field(default=20_000, gt=0)
+    survival_latencies_ms: list[int] = Field(
+        default_factory=lambda: [50, 100, 200, 500, 1000]
+    )
 
     # --- Persistencia (C12, FR-013) ---
     db_url: str = "sqlite+aiosqlite:///./arbitraje.db"

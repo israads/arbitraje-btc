@@ -1,0 +1,55 @@
+# Stack aislado para kavasoft. Red propia, NO interfiere con Easy Panel/Swarm.
+# Solo nginx publica un puerto al host (8090). backend/frontend quedan internos.
+# Acceso: http://159.89.187.165:8090
+#
+# Build context = raiz del repo (../..), porque los Dockerfile copian backend/ y frontend/.
+
+name: arbitraje-btc
+
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    image: arbitraje-btc-backend
+    environment:
+      - ARB_ENV=prod
+      - ARB_CONTROL_TOKEN=${ARB_CONTROL_TOKEN:-}
+    expose:
+      - "8000"
+    restart: unless-stopped
+    networks:
+      - arb-net
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/standalone/Dockerfile.frontend
+    image: arbitraje-btc-frontend
+    # `next start` ignora la env HOSTNAME (solo aplica al modo standalone) y bindea a
+    # localhost, quedando inalcanzable desde nginx. El flag -H 0.0.0.0 si surte efecto.
+    # Puerto 3100 (NO 3000): Easy Panel tiene una regla iptables DOCKER-USER que DROPea
+    # todo el trafico al :3000 entre contenedores salvo desde localhost.
+    command: ["npx", "next", "start", "-H", "0.0.0.0", "-p", "3100"]
+    expose:
+      - "3100"
+    restart: unless-stopped
+    networks:
+      - arb-net
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8090:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - arb-net
+
+networks:
+  arb-net:
+    driver: bridge

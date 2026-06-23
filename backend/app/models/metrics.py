@@ -35,6 +35,9 @@ class MetricsSnapshot(BaseModel):
     discard_reasons: dict[str, int] = Field(default_factory=dict)
     # Desglose del embudo por estrategia (spatial / stat_z) — visibilidad del z-score.
     by_strategy: dict[str, dict[str, int]] = Field(default_factory=dict)
+    # Ejecución protegida/testnet (PRD-003/006): labels acotados por venue y resultado.
+    preflight_results: dict[str, dict[str, int]] = Field(default_factory=dict)
+    test_order_results: dict[str, dict[str, int]] = Field(default_factory=dict)
 
     # --- Latencia por etapa (monotónica, en ventana) — NFR-001 p50<50ms ---
     detect_latency: StageLatency | None = None   # ingesta → detección (t_detect - t_recv)

@@ -37,3 +37,18 @@ def test_peg_never_one_to_one():
     s = Settings()
     assert "USDT" in s.peg_pairs
     assert s.peg_pairs["USDT"] != "1.00"
+
+
+def test_execution_defaults_are_safe():
+    """PRD-003: ejecución y test orders quedan apagados por defecto."""
+    s = Settings()
+    assert s.execution_mode == "disabled"
+    assert s.enable_test_orders is False
+    assert not s.binance_testnet_api_key
+    assert not s.binance_testnet_api_secret
+
+
+def test_integrity_defaults_to_warn_mode():
+    """PRD-004: validadores específicos observan primero, sin bloquear por default."""
+    s = Settings()
+    assert s.integrity_mode == "warn"

@@ -1,7 +1,14 @@
-"""C2 — Integridad de order book por exchange. FR-020.
+"""C2/PRD-004 — Integridad de order book por exchange."""
+from __future__ import annotations
 
-Binance `U/u`/nonce; Kraken CRC32 top-10 (OFF por defecto en ccxt.pro, activar vía
-`options` + `zlib`); Coinbase `sequence_num` + canal `heartbeats`. `qty=0` borra.
+from .checker import BookIntegrityChecker, integrity_reason
+from .models import IntegrityDecision, IntegrityReport
+from .validators import kraken_crc32
 
-Implementación: STORY-015. (MVP se apoya en la reconstrucción interna de ccxt.pro.)
-"""
+__all__ = [
+    "BookIntegrityChecker",
+    "IntegrityDecision",
+    "IntegrityReport",
+    "integrity_reason",
+    "kraken_crc32",
+]

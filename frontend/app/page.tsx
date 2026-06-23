@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Image from 'next/image';
 import { AppShell, Badge, Box, Divider, Grid, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import {
@@ -20,6 +21,8 @@ import { EdgeWaterfall } from '../components/EdgeWaterfall';
 import { BreakEvenFrontier } from '../components/BreakEvenFrontier';
 import { CapacityCurve } from '../components/CapacityCurve';
 import { ForwardFanChart } from '../components/ForwardFanChart';
+import { SurvivalCalibrationPanel } from '../components/SurvivalCalibrationPanel';
+import { OpportunityExplainDrawer } from '../components/OpportunityExplainDrawer';
 import { StatCard, AQUA } from '../components/primitives';
 
 function statusColor(s: ConnStatus): string {
@@ -180,10 +183,11 @@ function BrandMark() {
 export default function DashboardPage() {
   const {
     status, quotes, routeStats, detectedCount, metrics, breakers, demo, pnl, validation,
-    projection, capacity, forward,
+    projection, capacity, forward, survival,
   } = useStream();
   const spread = crossVenueSpread(quotes);
   const total = pnl?.total_pnl ?? 0;
+  const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
 
   return (
     <AppShell header={{ height: 64 }} padding={{ base: 'sm', sm: 'lg' }}>
@@ -316,12 +320,23 @@ export default function DashboardPage() {
             </Grid.Col>
           </Grid>
 
+          <SurvivalCalibrationPanel report={survival} />
+
           {/* Embudo de decisiones */}
           <FunnelPanel metrics={metrics} />
 
-          <OpportunitiesTable routeStats={routeStats} detectedCount={detectedCount} />
+          <OpportunitiesTable
+            routeStats={routeStats}
+            detectedCount={detectedCount}
+            onExplain={setSelectedOpportunityId}
+          />
         </Stack>
       </AppShell.Main>
+      <OpportunityExplainDrawer
+        opportunityId={selectedOpportunityId}
+        opened={selectedOpportunityId != null}
+        onClose={() => setSelectedOpportunityId(null)}
+      />
     </AppShell>
   );
 }

@@ -15,7 +15,8 @@ quiebres reales de profundidad del libro. `best` expone 3 óptimos (F3).
 from __future__ import annotations
 
 from ..config import Settings
-from ..engine.cost_model import compute_net
+from ..engine.cost_model import compute_net_from_curves
+from ..engine.depth_curve import DepthCurve
 from ..models.market import NormalizedBook
 from ..models.projection import (
     FeeTier,
@@ -151,6 +152,8 @@ def build_frontier(
 
     top_ask = asks[0][0] if asks else None
     top_bid = bids[0][0] if bids else None
+    ask_curve = DepthCurve.from_levels(asks, "ask")
+    bid_curve = DepthCurve.from_levels(bids, "bid")
 
     for _label, fee in _FEE_TIERS:
         r_npb: list[float | None] = []
@@ -160,8 +163,8 @@ def build_frontier(
         r_dl: list[bool] = []
         r_dc: list[str] = []
         for size in sizes:
-            nb = compute_net(
-                asks, bids, size, fee_buy=fee, fee_sell=fee,
+            nb = compute_net_from_curves(
+                ask_curve, bid_curve, size, fee_buy=fee, fee_sell=fee,
                 rebalance_btc=wd_btc, top_ask=top_ask, top_bid=top_bid,
             )
             if nb.filled <= 0.0:

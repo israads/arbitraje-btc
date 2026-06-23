@@ -28,6 +28,14 @@ class SpatialDetector:
         evaluador C6). No exponer para mutar: el detector es dueño del estado."""
         return self._books
 
+    def clear(self) -> None:
+        """Limpia el snapshot interno.
+
+        Se usa al entrar a una demo determinista para evitar cruces transitorios
+        contra books live anteriores.
+        """
+        self._books.clear()
+
     def on_book(self, nb: NormalizedBook, *, now: float | None = None) -> list[Opportunity]:
         self._books[nb.exchange] = nb
         return self._detect(trigger=nb, now=now)

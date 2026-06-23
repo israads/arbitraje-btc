@@ -7,5 +7,6 @@ Si los feeds reales caen (o por orden manual), reproduce los `NormalizedBook` GR
 from __future__ import annotations
 
 from .fallback import DemoFallback
+from .scenarios import JuryFrame, JuryScenario, JuryScenarioPlayer, PegUpdate
 
-__all__ = ["DemoFallback"]
+__all__ = ["DemoFallback", "JuryFrame", "JuryScenario", "JuryScenarioPlayer", "PegUpdate"]

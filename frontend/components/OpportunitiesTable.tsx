@@ -1,8 +1,8 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Badge, Card, Group, Table, Text, Tooltip } from '@mantine/core';
-import { IconArrowNarrowRight, IconTargetArrow } from '@tabler/icons-react';
+import { ActionIcon, Badge, Card, Group, Table, Text, Tooltip } from '@mantine/core';
+import { IconArrowNarrowRight, IconInfoCircle, IconTargetArrow } from '@tabler/icons-react';
 import type { RouteStat } from '../hooks/useStream';
 import { SectionHeader, VenueTag } from './primitives';
 
@@ -51,9 +51,11 @@ function fmt(n: number | null | undefined, signed = false): string {
 export function OpportunitiesTable({
   routeStats,
   detectedCount,
+  onExplain,
 }: {
   routeStats: RouteStat[];
   detectedCount: number;
+  onExplain?: (opportunityId: string) => void;
 }) {
   const rows = useMemo(
     () =>
@@ -94,12 +96,13 @@ export function OpportunitiesTable({
               <Table.Th ta="right">% viable</Table.Th>
               <Table.Th>Motivo descarte</Table.Th>
               <Table.Th ta="right">Estado</Table.Th>
+              <Table.Th ta="right">Detalle</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {rows.length === 0 && (
               <Table.Tr>
-                <Table.Td colSpan={7}>
+                <Table.Td colSpan={8}>
                   <Text c="dimmed" size="sm" py="md" ta="center">
                     Sin oportunidades aún (mercado eficiente o feeds cargando)…
                   </Text>
@@ -176,6 +179,19 @@ export function OpportunitiesTable({
                     <Badge variant="dot" color={STATUS_COLOR[r.lastStatus] ?? 'gray'} tt="none">
                       {STATUS_LABEL[r.lastStatus] ?? r.lastStatus}
                     </Badge>
+                  </Table.Td>
+                  <Table.Td ta="right">
+                    <Tooltip label="Explicar última oportunidad de esta ruta" withArrow>
+                      <ActionIcon
+                        variant="subtle"
+                        color="aqua"
+                        aria-label="Explicar oportunidad"
+                        disabled={!r.lastOpportunityId || !onExplain}
+                        onClick={() => r.lastOpportunityId && onExplain?.(r.lastOpportunityId)}
+                      >
+                        <IconInfoCircle size={18} />
+                      </ActionIcon>
+                    </Tooltip>
                   </Table.Td>
                 </Table.Tr>
               );

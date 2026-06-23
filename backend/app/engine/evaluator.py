@@ -63,7 +63,8 @@ from ..models.enums import DiscardReason, OpportunityStatus
 from ..models.market import NormalizedBook
 from ..models.opportunity import Opportunity
 from .bookmath import walk_book
-from .cost_model import compute_net
+from .cost_model import NetBreakdown, compute_net
+from .explain import build_opportunity_explanation
 
 if TYPE_CHECKING:
     from ..normalize.peg import PegProvider
@@ -102,6 +103,19 @@ class NetEvaluator:
         cfg: ExchangeConfig | None = self.settings.exchanges.get(venue)
         return cfg.withdrawal_btc if cfg is not None else 0.0
 
+    def _attach_explanation(
+        self,
+        opp: Opportunity,
+        buy_book: NormalizedBook,
+        sell_book: NormalizedBook,
+        *,
+        breakdown: NetBreakdown | None = None,
+    ) -> Opportunity:
+        opp.explanation = build_opportunity_explanation(
+            opp, buy_book, sell_book, self.settings, breakdown=breakdown
+        )
+        return opp
+
     def evaluate(
         self,
         opp: Opportunity,
@@ -122,7 +136,8 @@ class NetEvaluator:
             self.peg.within_tolerance(buy_book.quote_ccy)
             and self.peg.within_tolerance(sell_book.quote_ccy)
         ):
-            return self._discard(opp, DiscardReason.peg_adverse, q=0.0)
+            self._discard(opp, DiscardReason.peg_adverse, q=0.0)
+            return self._attach_explanation(opp, buy_book, sell_book)
 
         # --- 1) Cantidad alcanzable: walk-the-book en ambos legs (Apéndice D.1) ---
         # asks de compra (asc.) y bids de venta (desc.) ya vienen ordenados del book.
@@ -135,7 +150,8 @@ class NetEvaluator:
         # comparación con NaN es False, así que sin este guard el NaN se propagaría
         # hasta el neto y se etiquetaría con un motivo económico erróneo).
         if not math.isfinite(q) or q < _MIN_FILL_RATIO * q_objetivo or q <= 0.0:
-            return self._discard(opp, DiscardReason.thin_book, q=q)
+            self._discard(opp, DiscardReason.thin_book, q=q)
+            return self._attach_explanation(opp, buy_book, sell_book)
 
         # Reconstruimos los VWAP exactamente para la q efectiva (no para q_objetivo),
         # de modo que ambos legs midan el MISMO tamaño ejecutable.
@@ -162,7 +178,20 @@ class NetEvaluator:
             opp.vwap_sell = vwap_sell
             opp.slippage = slippage_usd
             opp.q_target = q
-            return self._discard(opp, DiscardReason.slippage_over_limit, q=q)
+            nb = compute_net(
+                buy_book.asks,
+                sell_book.bids,
+                q,
+                fee_buy=self._fee(opp.buy_venue),
+                fee_sell=self._fee(opp.sell_venue),
+                rebalance_btc=(
+                    self._withdrawal_btc(opp.buy_venue) + self._withdrawal_btc(opp.sell_venue)
+                ) / self.settings.expected_trades_per_rebalance,
+                top_ask=best_ask,
+                top_bid=best_bid,
+            )
+            self._discard(opp, DiscardReason.slippage_over_limit, q=q)
+            return self._attach_explanation(opp, buy_book, sell_book, breakdown=nb)
 
         # --- 3-7) Gross, fees por leg, rebalanceo amortizado y neto ---
         # Fuente ÚNICA de la aritmética (engine/cost_model.py): el MISMO cómputo que usa la
@@ -201,7 +230,7 @@ class NetEvaluator:
         else:
             opp.status = OpportunityStatus.discarded
             opp.discard_reason = DiscardReason.not_profitable_fees
-        return opp
+        return self._attach_explanation(opp, buy_book, sell_book, breakdown=nb)
 
     def _discard(
         self, opp: Opportunity, reason: DiscardReason, *, q: float

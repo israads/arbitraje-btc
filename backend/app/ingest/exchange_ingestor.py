@@ -88,6 +88,7 @@ class ExchangeIngestor:
 
     def _to_raw(self, ob: dict[str, Any]) -> RawOrderBook:
         n = self.cfg.ob_limit
+        meta = self._extract_meta(ob)
         return RawOrderBook(
             exchange=self.cfg.id,
             symbol=self.cfg.symbol,
@@ -97,7 +98,45 @@ class ExchangeIngestor:
             ts_exchange=ob.get("timestamp"),
             ts_recv_monotonic=time.monotonic(),
             seq=ob.get("nonce"),
+            meta=meta,
         )
+
+    @staticmethod
+    def _extract_meta(ob: dict[str, Any]) -> dict[str, Any]:
+        """Preserva metadata útil para validadores por venue sin acoplarse a ccxt internals."""
+        meta: dict[str, Any] = {}
+        for key in (
+            "nonce",
+            "checksum",
+            "checksum_crc32",
+            "checksum_valid",
+            "sequence",
+            "sequence_num",
+            "first_update_id",
+            "final_update_id",
+            "lastUpdateId",
+            "U",
+            "u",
+            "channel",
+        ):
+            if key in ob:
+                meta[key] = ob[key]
+        info = ob.get("info")
+        if isinstance(info, dict):
+            for key in (
+                "checksum",
+                "sequence",
+                "sequence_num",
+                "first_update_id",
+                "final_update_id",
+                "lastUpdateId",
+                "U",
+                "u",
+                "channel",
+            ):
+                if key in info and key not in meta:
+                    meta[key] = info[key]
+        return meta
 
     async def close(self) -> None:
         self._running = False

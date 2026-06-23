@@ -22,7 +22,7 @@ percentiles bajo demanda. Thread-safety no necesaria: un solo event loop (Apénd
 from __future__ import annotations
 
 import math
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 
 from ..config import Settings
 from ..models.enums import OpportunityStatus, Strategy
@@ -76,6 +76,8 @@ class MetricsCollector:
         self._by_strategy: dict[str, Counter[str]] = {
             s.value: Counter() for s in Strategy
         }
+        self._preflight_results: defaultdict[str, Counter[str]] = defaultdict(Counter)
+        self._test_order_results: defaultdict[str, Counter[str]] = defaultdict(Counter)
 
     # ---- Registro (camino caliente; O(1) amortizado) ----
 
@@ -149,6 +151,14 @@ class MetricsCollector:
         # realized REAL por BTC casado: incluye fills parciales, leg risk y pérdidas de unwind.
         if ex.matched_qty > 0 and math.isfinite(ex.realized_pnl):
             self._realized_spread.append(ex.realized_pnl / ex.matched_qty)
+
+    def record_preflight(self, venue: str, result: str) -> None:
+        """Cuenta resultados de preflight con labels acotados para Prometheus."""
+        self._preflight_results[venue.strip().lower() or "unknown"][result] += 1
+
+    def record_test_order(self, venue: str, result: str) -> None:
+        """Cuenta resultados de test-order con labels acotados para Prometheus."""
+        self._test_order_results[venue.strip().lower() or "unknown"][result] += 1
 
     def _close_episode(self, ep: tuple[float, float]) -> None:
         dur_ms = (ep[1] - ep[0]) * 1000.0
@@ -230,6 +240,8 @@ class MetricsCollector:
             unwound=funnel.get("unwound", 0),
             discard_reasons=dict(self._discard_reasons),
             by_strategy={k: dict(v) for k, v in self._by_strategy.items() if v},
+            preflight_results={k: dict(v) for k, v in self._preflight_results.items()},
+            test_order_results={k: dict(v) for k, v in self._test_order_results.items()},
             detect_latency=detect_stage,
             exec_latency=self._stage("exec", self._exec_lat),
             p50_ms=detect_stage.p50_ms if detect_stage else None,

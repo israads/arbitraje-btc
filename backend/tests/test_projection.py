@@ -7,8 +7,18 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
+from app.engine.cost_model import compute_net
 from app.models.market import NormalizedBook
-from app.projection.frontier import build_edge_frontier, build_frontier
+from app.projection.frontier import (
+    _BUY_ASKS,
+    _FEE_TIERS,
+    _SELL_BIDS,
+    _WD_BTC_DEMO,
+    build_edge_frontier,
+    build_frontier,
+)
 
 
 def test_frontier_shape_is_consistent():
@@ -88,6 +98,27 @@ def test_deterministic():
     a = build_frontier(mode="demo").matrix
     b = build_frontier(mode="demo").matrix
     assert a == b
+
+
+def test_frontier_depth_curve_matches_walk_book_cost_model():
+    """Regresión PRD-007: la integración DepthCurve no cambia la economía de una celda."""
+    f = build_frontier(mode="demo")
+    tier_idx = 2
+    size_idx = 3
+    fee = _FEE_TIERS[tier_idx][1]
+    q = f.sizes_btc[size_idx]
+    nb = compute_net(
+        _BUY_ASKS,
+        _SELL_BIDS,
+        q,
+        fee_buy=fee,
+        fee_sell=fee,
+        rebalance_btc=_WD_BTC_DEMO,
+        top_ask=_BUY_ASKS[0][0],
+        top_bid=_SELL_BIDS[0][0],
+    )
+    assert f.matrix[tier_idx][size_idx] == pytest.approx(nb.net_per_btc)
+    assert f.net_usd[tier_idx][size_idx] == pytest.approx(nb.net)
 
 
 def test_compat_build_edge_frontier_returns_dict():

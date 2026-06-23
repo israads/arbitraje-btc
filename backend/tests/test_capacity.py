@@ -1,8 +1,12 @@
 """Tests de la Capacity Curve (curva de capacidad)."""
 from __future__ import annotations
 
+import pytest
+
+from app.engine.cost_model import compute_net
 from app.models.projection import CapacityResult
 from app.projection.capacity import build_capacity_curve
+from app.projection.frontier import _BUY_ASKS, _SELL_BIDS, _WD_BTC_DEMO
 
 
 def test_capacity_demo_shape() -> None:
@@ -94,3 +98,18 @@ def test_capacity_determinismo() -> None:
     a = build_capacity_curve(mode="demo")
     b = build_capacity_curve(mode="demo")
     assert a.model_dump() == b.model_dump()
+
+
+def test_capacity_depth_curve_matches_walk_book_cost_model() -> None:
+    """Regresión PRD-007: una muestra de capacity conserva el neto walk_book."""
+    res = build_capacity_curve(mode="demo")
+    point = res.points[3]
+    nb = compute_net(
+        _BUY_ASKS,
+        _SELL_BIDS,
+        point.q_btc,
+        fee_buy=0.0004,
+        fee_sell=0.0004,
+        rebalance_btc=_WD_BTC_DEMO,
+    )
+    assert point.edge_total_usd == pytest.approx(nb.net)

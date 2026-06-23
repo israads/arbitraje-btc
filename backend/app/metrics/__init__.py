@@ -7,5 +7,6 @@ spread, price impact, capture/fill ratio, opportunity lifetime). STORY-022.
 from __future__ import annotations
 
 from .collector import MetricsCollector
+from .prometheus import render_prometheus
 
-__all__ = ["MetricsCollector"]
+__all__ = ["MetricsCollector", "render_prometheus"]

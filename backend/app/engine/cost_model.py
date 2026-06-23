@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .bookmath import walk_book
+from .depth_curve import DepthCurve
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,61 @@ def compute_net(
     nunca lanza. `NetBreakdown` vacío si no hay liquidez."""
     vwap_buy, filled_buy = walk_book(buy_asks, q)
     vwap_sell, filled_sell = walk_book(sell_bids, q)
+    return _compute_from_fills(
+        q,
+        vwap_buy,
+        filled_buy,
+        vwap_sell,
+        filled_sell,
+        fee_buy=fee_buy,
+        fee_sell=fee_sell,
+        rebalance_btc=rebalance_btc,
+        top_ask=top_ask,
+        top_bid=top_bid,
+    )
+
+
+def compute_net_from_curves(
+    buy_curve: DepthCurve,
+    sell_curve: DepthCurve,
+    q: float,
+    *,
+    fee_buy: float,
+    fee_sell: float,
+    rebalance_btc: float = 0.0,
+    top_ask: float | None = None,
+    top_bid: float | None = None,
+) -> NetBreakdown:
+    """Neto equivalente a `compute_net`, pero usando curvas de profundidad precomputadas."""
+    vwap_buy, filled_buy = buy_curve.vwap(q)
+    vwap_sell, filled_sell = sell_curve.vwap(q)
+    return _compute_from_fills(
+        q,
+        vwap_buy,
+        filled_buy,
+        vwap_sell,
+        filled_sell,
+        fee_buy=fee_buy,
+        fee_sell=fee_sell,
+        rebalance_btc=rebalance_btc,
+        top_ask=top_ask,
+        top_bid=top_bid,
+    )
+
+
+def _compute_from_fills(
+    q: float,
+    vwap_buy: float,
+    filled_buy: float,
+    vwap_sell: float,
+    filled_sell: float,
+    *,
+    fee_buy: float,
+    fee_sell: float,
+    rebalance_btc: float = 0.0,
+    top_ask: float | None = None,
+    top_bid: float | None = None,
+) -> NetBreakdown:
     filled = min(filled_buy, filled_sell)
     if filled <= 0.0:
         return _EMPTY

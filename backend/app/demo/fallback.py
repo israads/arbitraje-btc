@@ -31,13 +31,14 @@ from typing import TYPE_CHECKING, Any, Literal
 from ..backtest import Recorder
 from ..config import Settings
 from ..models.market import NormalizedBook
+from .scenarios import JuryFrame, JuryScenarioPlayer
 
 if TYPE_CHECKING:
     from ..state import AppState
 
 logger = logging.getLogger("app.demo.fallback")
 
-Mode = Literal["auto", "on", "off"]
+Mode = Literal["auto", "on", "off", "jury"]
 
 
 class DemoFallback:
@@ -62,6 +63,9 @@ class DemoFallback:
         self._replay: list[NormalizedBook] = []
         self._idx = 0
         self.since: float | None = None
+        self._jury = JuryScenarioPlayer()
+        self._jury_frame: JuryFrame | None = None
+        self._jury_market_reset = False
         # Recording de respaldo: se carga UNA sola vez aquí (en el arranque, fuera del hot loop
         # del controlador) — leer el JSONL en `tick()` congelaría el event loop justo con los
         # feeds caídos, y se repetiría a 20 Hz si el archivo está vacío/corrupto (revisión HIGH).
@@ -81,10 +85,23 @@ class DemoFallback:
     # ---- control de modo (operador / demo) ----
 
     def set_mode(self, mode: Mode) -> None:
+        if mode != self._mode:
+            self.active = False
+            self.since = None
+            self._replay = []
+            self._idx = 0
+            self._jury_frame = None
+            self._jury_market_reset = False
+            if mode == "jury":
+                self._jury.reset()
         self._mode = mode
 
+    @property
+    def is_jury_mode(self) -> bool:
+        return self._mode == "jury"
+
     def _want_active(self, now: float) -> bool:
-        if self._mode == "on":
+        if self._mode in ("on", "jury"):
             return True
         if self._mode == "off":
             return False
@@ -119,19 +136,36 @@ class DemoFallback:
     # ---- estado expuesto (badge) ----
 
     def status(self) -> dict[str, Any]:
-        return {
+        source = "deterministic" if self.active and self._mode == "jury" else (
+            "replay" if self.active else "live"
+        )
+        status: dict[str, Any] = {
             "active": self.active,
             "mode": self._mode,
-            "source": "replay" if self.active else "live",
+            "source": source,
             "badge": "DEMO DATA" if self.active else None,
             "since": self.since,
             "n_replay_ticks": len(self._replay),
         }
+        if self._mode == "jury":
+            frame = self._jury_frame
+            status.update({
+                "scenario": frame.scenario.name if frame is not None else None,
+                "scenario_description": (
+                    frame.scenario.description if frame is not None else None
+                ),
+                "scenario_index": frame.scenario_index if frame is not None else 0,
+                "n_scenarios": self._jury.n_scenarios,
+            })
+        return status
 
     def _activate(self, now: float) -> None:
         self.active = True
         self.since = now
-        logger.warning("DEMO fallback ACTIVO: replay de %d ticks grabados", len(self._replay))
+        if self._mode == "jury":
+            logger.warning("DEMO JURY ACTIVO: escenarios deterministas")
+        else:
+            logger.warning("DEMO fallback ACTIVO: replay de %d ticks grabados", len(self._replay))
         if self._on_change is not None:
             self._on_change(self.status())
 
@@ -140,13 +174,53 @@ class DemoFallback:
         self.since = None
         self._replay = []
         self._idx = 0
+        self._jury_frame = None
+        self._jury_market_reset = False
         logger.warning("DEMO fallback DESACTIVADO: feed real recuperado")
         if self._on_change is not None:
+            self._on_change(self.status())
+
+    def _reset_market_for_jury(self) -> None:
+        if self._jury_market_reset:
+            return
+        self._state.latest_norm.clear()
+        self._state.feed_status.clear()
+        detector = getattr(self._state, "detector", None)
+        if detector is not None:
+            detector.clear()
+        self._jury_market_reset = True
+
+    def _apply_jury_peg(self, frame: JuryFrame, now: float) -> None:
+        peg = getattr(self._state, "peg", None)
+        if peg is None:
+            return
+        for update in frame.scenario.peg_updates:
+            peg.update(update.stable, update.usd_rate, source=update.source, ts=now)
+
+    def _emit_jury_next(self, now: float) -> None:
+        self._reset_market_for_jury()
+        frame = self._jury.next_frame()
+        changed = (
+            self._jury_frame is None
+            or self._jury_frame.scenario.name != frame.scenario.name
+        )
+        self._jury_frame = frame
+        self._apply_jury_peg(frame, now)
+        for nb in frame.books:
+            ts_recv = now
+            if frame.scenario.stale:
+                ts_recv = now - (self._settings.staleness_ms / 1000.0) - 0.5
+            fresh = nb.model_copy(update={"ts_recv_monotonic": ts_recv})
+            self._inject(fresh)
+        if changed and self._on_change is not None:
             self._on_change(self.status())
 
     def _emit_next(self, now: float) -> None:
         """Inyecta el siguiente tick grabado, re-sellado fresco, cíclicamente (la demo no se
         agota: al terminar el buffer reinicia)."""
+        if self._mode == "jury":
+            self._emit_jury_next(now)
+            return
         nb = self._replay[self._idx]
         self._idx = (self._idx + 1) % len(self._replay)  # cicla acotado (no crece sin fin)
         fresh = nb.model_copy(update={"ts_recv_monotonic": now})
@@ -159,12 +233,15 @@ class DemoFallback:
         testear sin tarea de fondo."""
         want = self._want_active(now)
         if want and not self.active:
-            self._load_replay()
-            if self._replay:  # sin datos que reproducir no se activa (honesto: badge off)
+            if self._mode == "jury":
                 self._activate(now)
+            else:
+                self._load_replay()
+                if self._replay:  # sin datos que reproducir no se activa (honesto: badge off)
+                    self._activate(now)
         elif not want and self.active:
             self._deactivate(now)
-        if self.active and self._replay:
+        if self.active and (self._replay or self._mode == "jury"):
             self._emit_next(now)
 
     async def run(self) -> None:
