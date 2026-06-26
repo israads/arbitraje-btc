@@ -24,6 +24,7 @@ ClientFactory = Callable[[ExchangeConfig], WatchClient]
 # denegado NO se arreglan reintentando — reintentar en bucle sólo desperdicia ciclos y oculta
 # el fallo. Se detiene ESE venue (los demás siguen). Los transitorios (red/timeout/JSON) caen
 # al backoff. Import tolerante: sin ccxt instalado, la tupla queda vacía (no rompe los tests).
+_PERMANENT_ERROR_NAMES = frozenset({"AuthenticationError", "BadSymbol", "PermissionDenied"})
 try:
     from ccxt.base.errors import (
         AuthenticationError,
@@ -36,6 +37,16 @@ try:
     )
 except Exception:  # pragma: no cover — ccxt siempre presente en runtime/CI
     _PERMANENT_ERRORS = ()
+
+
+def _is_permanent(exc: BaseException) -> bool:
+    """¿El error detiene el venue sin reintentar? Robusto ante un import incompleto de
+    ccxt: si `_PERMANENT_ERRORS` quedó vacío en algún arranque (import parcial), clasificamos
+    por nombre recorriendo el MRO — auth/símbolo/permiso son SIEMPRE permanentes, y así un
+    error permanente nunca se degrada silenciosamente a backoff infinito."""
+    if _PERMANENT_ERRORS and isinstance(exc, _PERMANENT_ERRORS):
+        return True
+    return any(t.__name__ in _PERMANENT_ERROR_NAMES for t in type(exc).__mro__)
 
 
 class ExchangeIngestor:
@@ -70,16 +81,17 @@ class ExchangeIngestor:
                 backoff = 1.0  # reset tras éxito
             except asyncio.CancelledError:
                 raise
-            except _PERMANENT_ERRORS as exc:
-                # Auth/símbolo/permiso: reintentar no lo arregla. Detenemos SÓLO este venue
-                # (los demás feeds siguen) y dejamos rastro para health/diagnóstico.
-                self.permanent_error = f"{type(exc).__name__}: {exc}"
-                log.error(
-                    "ingest %s error PERMANENTE (%s) — venue detenido, sin reintentos",
-                    self.cfg.id, self.permanent_error,
-                )
-                self._running = False
             except Exception as exc:  # noqa: BLE001 — resiliencia: nunca tumbar el loop
+                if _is_permanent(exc):
+                    # Auth/símbolo/permiso: reintentar no lo arregla. Detenemos SÓLO este venue
+                    # (los demás feeds siguen) y dejamos rastro para health/diagnóstico.
+                    self.permanent_error = f"{type(exc).__name__}: {exc}"
+                    log.error(
+                        "ingest %s error PERMANENTE (%s) — venue detenido, sin reintentos",
+                        self.cfg.id, self.permanent_error,
+                    )
+                    self._running = False
+                    continue
                 log.warning(
                     "ingest %s error: %s — reconectando en %.1fs", self.cfg.id, exc, backoff
                 )

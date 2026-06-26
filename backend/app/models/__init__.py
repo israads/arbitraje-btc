@@ -28,6 +28,7 @@ from .explain import (
 from .market import NormalizedBook, PegRate, PriceLevel, Quote, RawOrderBook
 from .metrics import MetricsSnapshot
 from .opportunity import Opportunity
+from .params import RuntimeParamOverrides, WhatIfRequest
 from .preflight import (
     ExecutionStatus,
     PreflightCheck,
@@ -76,6 +77,8 @@ __all__ = [
     "RawOrderBook",
     "MetricsSnapshot",
     "Opportunity",
+    "RuntimeParamOverrides",
+    "WhatIfRequest",
     "ExecutionStatus",
     "PreflightCheck",
     "PreflightRequest",

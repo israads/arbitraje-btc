@@ -10,7 +10,7 @@ import {
   IconChartHistogram,
   IconWallet,
 } from '@tabler/icons-react';
-import { useStream, type ConnStatus } from '../hooks/useStream';
+import { DEFAULT_STRATEGY_PARAMS, useStream, type ConnStatus } from '../hooks/useStream';
 import { PricesTable } from '../components/PricesTable';
 import { OpportunitiesTable } from '../components/OpportunitiesTable';
 import { FunnelPanel } from '../components/FunnelPanel';
@@ -23,6 +23,7 @@ import { CapacityCurve } from '../components/CapacityCurve';
 import { ForwardFanChart } from '../components/ForwardFanChart';
 import { SurvivalCalibrationPanel } from '../components/SurvivalCalibrationPanel';
 import { OpportunityExplainDrawer } from '../components/OpportunityExplainDrawer';
+import { StrategyLabPanel } from '../components/StrategyLabPanel';
 import { StatCard, AQUA } from '../components/primitives';
 
 function statusColor(s: ConnStatus): string {
@@ -181,10 +182,11 @@ function BrandMark() {
 }
 
 export default function DashboardPage() {
+  const [strategyParams, setStrategyParams] = useState(DEFAULT_STRATEGY_PARAMS);
   const {
     status, quotes, routeStats, detectedCount, metrics, breakers, demo, pnl, validation,
     projection, capacity, forward, survival,
-  } = useStream();
+  } = useStream(strategyParams);
   const spread = crossVenueSpread(quotes);
   const total = pnl?.total_pnl ?? 0;
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
@@ -261,12 +263,15 @@ export default function DashboardPage() {
             />
           </SimpleGrid>
 
-          {/* HERO: Edge Waterfall (prueba de correctitud) + Control del operador */}
+          {/* HERO: Edge Waterfall + Strategy Lab + Control del operador */}
           <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 7 }}>
+            <Grid.Col span={{ base: 12, md: 6 }}>
               <EdgeWaterfall report={validation} />
             </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 5 }}>
+            <Grid.Col span={{ base: 12, md: 3 }}>
+              <StrategyLabPanel params={strategyParams} onApply={setStrategyParams} />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 3 }}>
               <ControlPanel breakers={breakers} demo={demo} />
             </Grid.Col>
           </Grid>
@@ -334,6 +339,7 @@ export default function DashboardPage() {
       </AppShell.Main>
       <OpportunityExplainDrawer
         opportunityId={selectedOpportunityId}
+        strategyParams={strategyParams}
         opened={selectedOpportunityId != null}
         onClose={() => setSelectedOpportunityId(null)}
       />

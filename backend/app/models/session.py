@@ -16,6 +16,7 @@ class SessionMetadata(BaseModel):
 class SessionExport(BaseModel):
     metadata: SessionMetadata
     settings: dict[str, Any]
+    runtime_params: dict[str, Any] = Field(default_factory=dict)
     quotes: list[dict[str, Any]] = Field(default_factory=list)
     opportunities: list[dict[str, Any]] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)

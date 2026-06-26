@@ -129,21 +129,23 @@ def test_modo_jury_inyecta_escenarios_deterministas():
     assert st["source"] == "deterministic"
     assert st["scenario"] == "good_edge"
     assert st["scenario_index"] == 1
-    assert st["n_scenarios"] == 5
+    assert st["n_scenarios"] == 7
     assert len(sink) == 2
 
 
 def test_jury_player_cycles_all_required_scenarios():
     player = JuryScenarioPlayer(repeats_per_scenario=1)
-    names = [player.next_frame().scenario.name for _ in range(6)]
-    assert names[:5] == [
+    names = [player.next_frame().scenario.name for _ in range(8)]
+    assert names[:7] == [
         "good_edge",
         "naive_trap",
         "peg_adverse",
         "stale_feed",
         "latency_decay",
+        "thin_book",
+        "order_failure",
     ]
-    assert names[5] == "good_edge"
+    assert names[7] == "good_edge"
 
 
 # ---- inyección re-sellada (fresca) ----
@@ -243,7 +245,22 @@ def test_endpoint_demo_set_jury_mode(client):
     assert body["mode"] == "jury"
     assert body["source"] == "deterministic"
     assert body["scenario"] == "good_edge"
-    assert body["n_scenarios"] == 5
+    assert body["n_scenarios"] == 7
+
+
+def test_endpoint_demo_lists_and_selects_adverse_scenarios(client):
+    listed = client.get("/api/v1/demo/scenarios")
+    assert listed.status_code == 200
+    scenarios = {s["name"]: s for s in listed.json()["scenarios"]}
+    assert scenarios["thin_book"]["expected_result"] == "thin_book"
+    assert scenarios["order_failure"]["kind"] == "execution"
+
+    selected = client.post("/api/v1/demo/scenario/thin_book")
+    assert selected.status_code == 200
+    body = selected.json()
+    assert body["mode"] == "jury"
+    assert body["scenario"] == "thin_book"
+    assert body["expected_result"] == "thin_book"
 
 
 def test_session_export_contains_sections_and_redacts_settings(client):
@@ -272,6 +289,7 @@ def test_session_export_contains_sections_and_redacts_settings(client):
     assert r.status_code == 200
     body = r.json()
     assert {"metadata", "settings", "quotes", "opportunities", "metrics", "demo"} <= set(body)
+    assert "runtime_params" in body
     assert "control_token" not in body["settings"]
     assert "db_url" not in body["settings"]
     assert "calibration" in body

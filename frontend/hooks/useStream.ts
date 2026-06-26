@@ -163,6 +163,8 @@ export interface DemoStatus {
   n_replay_ticks?: number;
   scenario?: string | null;
   scenario_description?: string | null;
+  scenario_kind?: string | null;
+  expected_result?: string | null;
   scenario_index?: number;
   n_scenarios?: number;
 }
@@ -305,6 +307,24 @@ export interface SurvivalCalibration {
   }[];
 }
 
+export interface StrategyLabParams {
+  size_btc: number;
+  fee_bps: number;
+  latency_ms: number;
+  max_slippage: number;
+  expected_trades_per_rebalance: number;
+  n_paths: number;
+}
+
+export const DEFAULT_STRATEGY_PARAMS: StrategyLabParams = {
+  size_btc: 1,
+  fee_bps: 10,
+  latency_ms: 150,
+  max_slippage: 0.001,
+  expected_trades_per_rebalance: 1,
+  n_paths: 2000,
+};
+
 /** Estadística acumulada por ruta (buy→sell) durante toda la sesión, no solo el buffer. */
 export interface RouteStat {
   route: string;
@@ -344,6 +364,22 @@ function fetchJson<T>(url: string, opt?: RequestInit): Promise<T> {
   });
 }
 
+function projectionUrl(params: StrategyLabParams): string {
+  return `${API_BASE}/api/v1/projection?mode=live&latency_ms=${params.latency_ms}`;
+}
+
+function capacityUrl(params: StrategyLabParams): string {
+  return `${API_BASE}/api/v1/capacity?mode=live&fee_bps=${params.fee_bps}`;
+}
+
+function forwardUrl(params: StrategyLabParams): string {
+  return `${API_BASE}/api/v1/forward?n_paths=${params.n_paths}`;
+}
+
+function survivalUrl(params: StrategyLabParams): string {
+  return `${API_BASE}/api/v1/calibration/survival?latency_ms=${params.latency_ms}`;
+}
+
 /**
  * Suscripción SSE al backend (C18). Patrón buffer-ref + requestAnimationFrame:
  * los eventos se acumulan en refs y se vuelcan a estado a lo sumo una vez por
@@ -352,7 +388,7 @@ function fetchJson<T>(url: string, opt?: RequestInit): Promise<T> {
  * STORY-023: además de quotes/opportunities, consume los eventos `metrics`, `breaker`
  * y `demo` (C13/C8/C16) y hace polling de `/pnl` (equity curve) cada 2 s.
  */
-export function useStream() {
+export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_PARAMS) {
   const [status, setStatus] = useState<ConnStatus>('connecting');
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
@@ -390,16 +426,16 @@ export function useStream() {
     fetchJson<ValidationReport>(`${API_BASE}/api/v1/validation`)
       .then(setValidation)
       .catch(() => undefined);
-    fetchJson<EdgeFrontier>(`${API_BASE}/api/v1/projection?mode=live`)
+    fetchJson<EdgeFrontier>(projectionUrl(strategyParams))
       .then(setProjection)
       .catch(() => undefined);
-    fetchJson<EdgeCapacity>(`${API_BASE}/api/v1/capacity?mode=live`)
+    fetchJson<EdgeCapacity>(capacityUrl(strategyParams))
       .then(setCapacity)
       .catch(() => undefined);
-    fetchJson<ForwardProjection>(`${API_BASE}/api/v1/forward?n_paths=2000`)
+    fetchJson<ForwardProjection>(forwardUrl(strategyParams))
       .then(setForward)
       .catch(() => undefined);
-    fetchJson<SurvivalCalibration>(`${API_BASE}/api/v1/calibration/survival?latency_ms=100`)
+    fetchJson<SurvivalCalibration>(survivalUrl(strategyParams))
       .then(setSurvival)
       .catch(() => undefined);
 
@@ -517,10 +553,10 @@ export function useStream() {
     // único worker del backend en 2 cores; n_paths moderado.
     const pullHeavy = () => {
       const opt = { signal: ac.signal };
-      fetchJson<EdgeFrontier>(`${API_BASE}/api/v1/projection?mode=live`, opt).then(setProjection).catch(() => undefined);
-      fetchJson<EdgeCapacity>(`${API_BASE}/api/v1/capacity?mode=live`, opt).then(setCapacity).catch(() => undefined);
-      fetchJson<ForwardProjection>(`${API_BASE}/api/v1/forward?n_paths=2000`, opt).then(setForward).catch(() => undefined);
-      fetchJson<SurvivalCalibration>(`${API_BASE}/api/v1/calibration/survival?latency_ms=100`, opt).then(setSurvival).catch(() => undefined);
+      fetchJson<EdgeFrontier>(projectionUrl(strategyParams), opt).then(setProjection).catch(() => undefined);
+      fetchJson<EdgeCapacity>(capacityUrl(strategyParams), opt).then(setCapacity).catch(() => undefined);
+      fetchJson<ForwardProjection>(forwardUrl(strategyParams), opt).then(setForward).catch(() => undefined);
+      fetchJson<SurvivalCalibration>(survivalUrl(strategyParams), opt).then(setSurvival).catch(() => undefined);
     };
     pullLight();
     pullHeavy();
@@ -534,7 +570,14 @@ export function useStream() {
       clearInterval(pollLight);
       clearInterval(pollHeavy);
     };
-  }, []);
+  }, [
+    strategyParams.fee_bps,
+    strategyParams.latency_ms,
+    strategyParams.n_paths,
+    strategyParams.size_btc,
+    strategyParams.max_slippage,
+    strategyParams.expected_trades_per_rebalance,
+  ]);
 
   return {
     status, quotes, opportunities, routeStats, detectedCount,

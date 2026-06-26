@@ -96,6 +96,29 @@ class DemoFallback:
                 self._jury.reset()
         self._mode = mode
 
+    def jury_scenarios(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": s.name,
+                "description": s.description,
+                "kind": s.kind,
+                "expected_result": s.expected_result,
+            }
+            for s in self._jury.scenarios()
+        ]
+
+    def select_jury_scenario(self, name: str) -> bool:
+        if self._mode != "jury":
+            self.set_mode("jury")
+        selected = self._jury.select(name)
+        if selected is None:
+            return False
+        self.active = False
+        self.since = None
+        self._jury_frame = None
+        self._jury_market_reset = False
+        return True
+
     @property
     def is_jury_mode(self) -> bool:
         return self._mode == "jury"
@@ -154,6 +177,8 @@ class DemoFallback:
                 "scenario_description": (
                     frame.scenario.description if frame is not None else None
                 ),
+                "scenario_kind": frame.scenario.kind if frame is not None else None,
+                "expected_result": frame.scenario.expected_result if frame is not None else None,
                 "scenario_index": frame.scenario_index if frame is not None else 0,
                 "n_scenarios": self._jury.n_scenarios,
             })

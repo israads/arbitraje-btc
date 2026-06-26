@@ -1,8 +1,8 @@
 'use client';
 
 import { Badge, Button, Card, Group, SegmentedControl, Stack, Text } from '@mantine/core';
-import { IconBolt, IconDownload, IconPlayerPlay, IconShieldHalf } from '@tabler/icons-react';
-import { useState } from 'react';
+import { IconAlertTriangle, IconBolt, IconDownload, IconPlayerPlay, IconShieldHalf } from '@tabler/icons-react';
+import { useEffect, useState } from 'react';
 import { API_BASE } from '../lib/config';
 import type { BreakerStatus, DemoStatus } from '../hooks/useStream';
 import { SectionHeader } from './primitives';
@@ -15,6 +15,13 @@ const BREAKER_LABEL: Record<string, string> = {
   kill_switch: 'Kill switch',
 };
 
+interface JuryScenarioInfo {
+  name: string;
+  description: string;
+  kind: string;
+  expected_result: string | null;
+}
+
 /**
  * Panel de control del operador (C18): kill switch / resume (C8) y modo del fallback de
  * demo (C16), más el estado vivo de los circuit breakers. Las acciones hacen POST al
@@ -22,6 +29,16 @@ const BREAKER_LABEL: Record<string, string> = {
  */
 export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo: DemoStatus }) {
   const [busy, setBusy] = useState(false);
+  const [scenarios, setScenarios] = useState<JuryScenarioInfo[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/v1/demo/scenarios`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { scenarios?: JuryScenarioInfo[] } | null) => {
+        if (Array.isArray(d?.scenarios)) setScenarios(d.scenarios);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const post = async (path: string) => {
     if (busy) return; // evita acciones solapadas (doble-click / cambio rápido de modo)
@@ -121,6 +138,35 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
             </Badge>
           )}
         </div>
+
+        {scenarios.length > 0 && (
+          <div>
+            <Text size="xs" tt="uppercase" fw={600} c="dimmed" mb={6} style={{ letterSpacing: 0 }}>
+              Escenarios adversos
+            </Text>
+            <Group gap={6}>
+              {scenarios.map((s) => (
+                <Button
+                  key={s.name}
+                  size="compact-xs"
+                  variant={demo.scenario === s.name ? 'filled' : 'light'}
+                  color={s.kind === 'execution' ? 'red' : 'yellow'}
+                  leftSection={s.kind === 'execution' ? <IconAlertTriangle size={13} /> : undefined}
+                  loading={busy && demo.scenario === s.name}
+                  title={s.description}
+                  onClick={() => post(`demo/scenario/${encodeURIComponent(s.name)}`)}
+                >
+                  {s.name.replaceAll('_', ' ')}
+                </Button>
+              ))}
+            </Group>
+            {demo.expected_result && (
+              <Badge color="gray" variant="default" mt="xs" tt="none">
+                esperado: {demo.expected_result.replaceAll('_', ' ')}
+              </Badge>
+            )}
+          </div>
+        )}
 
         <Button
           variant="light"

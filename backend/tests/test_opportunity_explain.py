@@ -99,6 +99,30 @@ def test_opportunity_explain_endpoint_returns_contract(client):
     assert [c["key"] for c in data["breakdown"]][-1] == "net"
 
 
+def test_opportunity_what_if_recalculates_against_live_route_books(client):
+    t = time.monotonic()
+    buy = _book("binance", bids=[(99.0, 5.0)], asks=[(100.0, 5.0)], ts=t)
+    sell = _book("kraken", bids=[(110.0, 5.0)], asks=[(111.0, 5.0)], ts=t)
+    opp = NetEvaluator(_settings()).evaluate(_detected("opp-what-if"), buy, sell)
+    ctx = client.app.state.ctx
+    ctx.latest_norm[buy.exchange] = buy
+    ctx.latest_norm[sell.exchange] = sell
+    ctx.record_opportunity(opp)
+
+    r = client.post(
+        f"/api/v1/opportunities/{opp.id}/what-if",
+        json={"size_btc": 0.5, "fee_bps": 0.0, "max_slippage": 1.0},
+    )
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["opportunity_id"] == opp.id
+    assert data["what_if"]["q_target"] == pytest.approx(0.5)
+    assert data["what_if"]["engine"]["status"] == "viable"
+    assert data["what_if"]["engine"]["net_usd"] == pytest.approx(4.975)
+    assert "what_if" in data["what_if"]["notes"]
+
+
 def test_opportunity_explain_endpoint_404_for_unknown_id(client):
     r = client.get("/api/v1/opportunities/missing/explain")
     assert r.status_code == 404
@@ -123,4 +147,3 @@ def test_opportunities_endpoint_does_not_embed_explanation(client):
     data = r.json()
     assert data["opportunities"][0]["id"] == opp.id
     assert "explanation" not in data["opportunities"][0]
-

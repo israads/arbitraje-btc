@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from collections.abc import AsyncGenerator, Callable
 from functools import partial
@@ -14,7 +15,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from sse_starlette.sse import EventSourceResponse
 
+from ...models.enums import DiscardReason, OpportunityStatus
 from ...models.metrics import MetricsSnapshot
+from ...models.params import RuntimeParamOverrides, WhatIfRequest
 from ...models.preflight import PreflightRequest, TestOrderRequest
 from ...models.session import SessionExport, SessionMetadata
 from ...models.strategy import StrategyInfo
@@ -33,6 +36,7 @@ log = logging.getLogger("app.api.v1")
 _PROJECTION_SEM = asyncio.Semaphore(1)
 _PROJECTION_TTL = 20.0  # s — las proyecciones cambian lento; refresco sub-20s no aporta.
 _PROJECTION_CACHE: dict[str, tuple[float, Any]] = {}
+_MIN_WHAT_IF_FILL_RATIO = 0.10
 
 
 async def _cached_projection(key: str, compute: Callable[[], Any]) -> Any:
@@ -128,6 +132,75 @@ def _safe_session_settings(ctx: Any) -> dict[str, Any]:
             for key, cfg in settings.exchanges.items()
         },
     }
+
+
+def _runtime_params_snapshot(ctx: Any) -> dict[str, Any]:
+    """Snapshot publico de parametros ajustables y sus overrides activos.
+
+    Los overrides son deliberadamente read-only para el motor vivo en esta fase: se usan en
+    what-if/proyecciones y se exportan para auditoria, pero no cambian ejecucion real.
+    """
+    settings = ctx.settings
+    overrides_model = getattr(ctx, "runtime_params", RuntimeParamOverrides())
+    overrides = overrides_model.model_dump(
+        mode="json",
+        exclude_none=True,
+        exclude_defaults=True,
+    )
+    base = {
+        "default_trade_qty_btc": settings.default_trade_qty_btc,
+        "max_slippage": settings.max_slippage,
+        "min_net_profit_usd": settings.min_net_profit_usd,
+        "exec_latency_ms": settings.exec_latency_ms,
+        "expected_trades_per_rebalance": settings.expected_trades_per_rebalance,
+        "peg_tolerance": settings.peg_tolerance,
+        "z_open": settings.z_open,
+        "z_close": settings.z_close,
+        "z_stop": settings.z_stop,
+        "inventory_skew_limit": settings.inventory_skew_limit,
+        "fee_bps": None,
+        "n_paths": 2000,
+    }
+    effective = {
+        **base,
+        **{k: v for k, v in overrides.items() if k != "enabled_exchange_overrides"},
+    }
+    exchange_overrides = overrides.get("enabled_exchange_overrides", {})
+    exchanges = {
+        key: {
+            "enabled": bool(exchange_overrides.get(key, cfg.enabled)),
+            "configured_enabled": cfg.enabled,
+            "fee_bps": cfg.fee_taker * 10_000.0,
+            "withdrawal_btc": cfg.withdrawal_btc,
+            "symbol": cfg.symbol,
+            "quote_ccy": cfg.quote_ccy,
+        }
+        for key, cfg in settings.exchanges.items()
+    }
+    return {
+        "revision": getattr(ctx, "runtime_revision", 0),
+        "scope": "what_if_and_projection_only",
+        "base": base,
+        "overrides": overrides,
+        "effective": effective,
+        "exchanges": exchanges,
+        "ranges": {
+            "default_trade_qty_btc": {"min": 0.00001, "max": 10.0},
+            "fee_bps": {"min": 0.0, "max": 100.0},
+            "latency_ms": {"min": 1, "max": 10_000},
+            "max_slippage": {"min": 0.0, "max": 0.02},
+            "expected_trades_per_rebalance": {"min": 1.0, "max": 50.0},
+            "n_paths": {"min": 100, "max": 20_000},
+        },
+    }
+
+
+def _runtime_value(ctx: Any, key: str) -> Any:
+    overrides = getattr(ctx, "runtime_params", None)
+    value = getattr(overrides, key, None) if overrides is not None else None
+    if value is not None:
+        return value
+    return getattr(ctx.settings, key)
 
 
 def _export_opportunity(opp: Any) -> dict[str, Any]:
@@ -287,6 +360,56 @@ async def quotes(request: Request) -> dict[str, Any]:
     return {"quotes": out, "peg": ctx.peg.snapshot() if ctx.peg else {}}
 
 
+@router.get("/config/public")
+async def public_config(request: Request) -> dict[str, Any]:
+    """Configuracion saneada para Strategy Lab.
+
+    No expone tokens, rutas internas ni credenciales; solo parametros economicos y venues.
+    """
+    ctx = request.app.state.ctx
+    return {
+        "settings": _safe_session_settings(ctx),
+        "runtime": _runtime_params_snapshot(ctx),
+    }
+
+
+@router.get("/params")
+async def params(request: Request) -> dict[str, Any]:
+    """Parametros ajustables de Strategy Lab y overrides activos."""
+    ctx = request.app.state.ctx
+    return _runtime_params_snapshot(ctx)
+
+
+@router.patch("/params", dependencies=[Depends(require_control_token)])
+async def params_patch(request: Request, body: RuntimeParamOverrides) -> dict[str, Any]:
+    """Guarda overrides de Strategy Lab sin mutar el motor vivo.
+
+    Sirve para what-if/proyecciones/export auditable. La ejecucion real queda separada para no
+    cambiar umbrales operativos por un movimiento de UI.
+    """
+    ctx = request.app.state.ctx
+    current = getattr(ctx, "runtime_params", RuntimeParamOverrides())
+    incoming = body.model_dump(exclude_unset=True)
+    if "enabled_exchange_overrides" in incoming:
+        merged_ex = dict(current.enabled_exchange_overrides)
+        merged_ex.update(cast(dict[str, bool], incoming["enabled_exchange_overrides"]))
+        incoming["enabled_exchange_overrides"] = merged_ex
+    ctx.runtime_params = current.model_copy(update=incoming)
+    ctx.runtime_revision = getattr(ctx, "runtime_revision", 0) + 1
+    _PROJECTION_CACHE.clear()
+    return _runtime_params_snapshot(ctx)
+
+
+@router.post("/params/reset", dependencies=[Depends(require_control_token)])
+async def params_reset(request: Request) -> dict[str, Any]:
+    """Limpia overrides de Strategy Lab."""
+    ctx = request.app.state.ctx
+    ctx.runtime_params = RuntimeParamOverrides()
+    ctx.runtime_revision = getattr(ctx, "runtime_revision", 0) + 1
+    _PROJECTION_CACHE.clear()
+    return _runtime_params_snapshot(ctx)
+
+
 @router.get("/opportunities")
 async def opportunities(
     request: Request, status: str | None = None, limit: int = 100
@@ -317,6 +440,157 @@ async def opportunity_explain(request: Request, opportunity_id: str) -> dict[str
     if opp.explanation is None:
         raise HTTPException(status_code=409, detail="opportunity explanation unavailable")
     return cast(dict[str, Any], opp.explanation.model_dump(mode="json"))
+
+
+@router.post("/opportunities/{opportunity_id}/what-if")
+async def opportunity_what_if(
+    request: Request,
+    opportunity_id: str,
+    body: WhatIfRequest,
+) -> dict[str, Any]:
+    """Recalcula una oportunidad reciente con parametros alternativos.
+
+    Usa los libros vivos actuales de la misma ruta. No registra oportunidad, no ejecuta orden y
+    no altera el embudo: es analisis explainable para Strategy Lab.
+    """
+    from ...engine.cost_model import NetBreakdown, compute_net
+    from ...engine.explain import build_opportunity_explanation
+
+    ctx = request.app.state.ctx
+    opp = getattr(ctx, "opps_by_id", {}).get(opportunity_id)
+    if opp is None:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    books = _strategy_books(ctx)
+    buy_book = books.get(opp.buy_venue)
+    sell_book = books.get(opp.sell_venue)
+    if buy_book is None or sell_book is None:
+        raise HTTPException(status_code=409, detail="route books unavailable")
+
+    runtime_size = getattr(getattr(ctx, "runtime_params", None), "default_trade_qty_btc", None)
+    q_requested = (
+        body.size_btc
+        if body.size_btc is not None
+        else runtime_size
+        if runtime_size is not None
+        else opp.q_target
+        if opp.q_target > 0.0
+        else ctx.settings.default_trade_qty_btc
+    )
+    if q_requested <= 0.0 or not math.isfinite(q_requested):
+        raise HTTPException(status_code=422, detail="size_btc must be finite and positive")
+
+    runtime_fee_bps = getattr(getattr(ctx, "runtime_params", None), "fee_bps", None)
+
+    def _fee(venue: str, explicit_bps: float | None) -> float:
+        bps = explicit_bps if explicit_bps is not None else body.fee_bps
+        if bps is None:
+            bps = runtime_fee_bps
+        if bps is not None:
+            return bps / 10_000.0
+        cfg = ctx.settings.exchanges.get(venue)
+        return cfg.fee_taker if cfg is not None else 0.0
+
+    buy_cfg = ctx.settings.exchanges.get(opp.buy_venue)
+    sell_cfg = ctx.settings.exchanges.get(opp.sell_venue)
+    trades = (
+        body.expected_trades_per_rebalance
+        if body.expected_trades_per_rebalance is not None
+        else float(_runtime_value(ctx, "expected_trades_per_rebalance"))
+    )
+    wd_buy = buy_cfg.withdrawal_btc if buy_cfg is not None else 0.0
+    wd_sell = sell_cfg.withdrawal_btc if sell_cfg is not None else 0.0
+    top_ask = buy_book.best_ask
+    top_bid = sell_book.best_bid
+    nb = compute_net(
+        buy_book.asks,
+        sell_book.bids,
+        q_requested,
+        fee_buy=_fee(opp.buy_venue, body.fee_buy_bps),
+        fee_sell=_fee(opp.sell_venue, body.fee_sell_bps),
+        rebalance_btc=(wd_buy + wd_sell) / trades,
+        top_ask=top_ask,
+        top_bid=top_bid,
+    )
+
+    max_slippage = (
+        body.max_slippage
+        if body.max_slippage is not None
+        else float(_runtime_value(ctx, "max_slippage"))
+    )
+    min_net_profit_usd = (
+        body.min_net_profit_usd
+        if body.min_net_profit_usd is not None
+        else float(_runtime_value(ctx, "min_net_profit_usd"))
+    )
+    slip_buy_rel = nb.slippage_buy / top_ask if top_ask and top_ask > 0.0 else 0.0
+    slip_sell_rel = nb.slippage_sell / top_bid if top_bid and top_bid > 0.0 else 0.0
+
+    breakdown: NetBreakdown | None = nb
+    status = OpportunityStatus.discarded
+    reason: DiscardReason | None
+    if (
+        not math.isfinite(nb.filled)
+        or nb.filled <= 0.0
+        or nb.filled < _MIN_WHAT_IF_FILL_RATIO * q_requested
+    ):
+        reason = DiscardReason.thin_book
+        breakdown = None
+    elif slip_buy_rel > max_slippage or slip_sell_rel > max_slippage:
+        reason = DiscardReason.slippage_over_limit
+    elif nb.net > min_net_profit_usd:
+        status = OpportunityStatus.viable
+        reason = None
+    else:
+        reason = DiscardReason.not_profitable_fees
+
+    q_effective = nb.filled if nb.filled > 0.0 and math.isfinite(nb.filled) else 0.0
+    what_opp = opp.model_copy(deep=True, update={
+        "q_target": q_effective,
+        "vwap_buy": nb.vwap_buy if breakdown is not None else None,
+        "vwap_sell": nb.vwap_sell if breakdown is not None else None,
+        "fees": nb.fees if breakdown is not None else None,
+        "slippage": nb.slippage_cost if breakdown is not None else None,
+        "net_pnl": nb.net if breakdown is not None else None,
+        "status": status,
+        "discard_reason": reason,
+    })
+    explanation = build_opportunity_explanation(
+        what_opp,
+        buy_book,
+        sell_book,
+        ctx.settings,
+        breakdown=breakdown,
+    )
+    explanation.notes.extend([
+        "what_if",
+        f"requested_size_btc={q_requested:.8f}",
+        f"max_slippage={max_slippage:.8f}",
+    ])
+    current_net = opp.net_pnl
+    delta = (
+        explanation.engine.net_usd - current_net
+        if explanation.engine.net_usd is not None and current_net is not None
+        else None
+    )
+    return {
+        "opportunity_id": opportunity_id,
+        "source": "live_route_books",
+        "overrides": body.model_dump(mode="json", exclude_none=True),
+        "current": (
+            opp.explanation.model_dump(mode="json")
+            if opp.explanation is not None
+            else None
+        ),
+        "what_if": explanation.model_dump(mode="json"),
+        "delta_net_usd": delta,
+        "diagnostics": {
+            "filled_btc": nb.filled,
+            "depth_limited": nb.depth_limited,
+            "slip_buy_rel": slip_buy_rel,
+            "slip_sell_rel": slip_sell_rel,
+            "min_fill_ratio": _MIN_WHAT_IF_FILL_RATIO,
+        },
+    }
 
 
 # --- Stubs REST (implementación por story) ---
@@ -606,6 +880,44 @@ async def demo_set_mode(request: Request, mode: str = Query(...)) -> dict[str, A
     return set_mode_st
 
 
+@router.get("/demo/scenarios")
+async def demo_scenarios(request: Request) -> dict[str, Any]:
+    """Escenarios deterministas disponibles para demo de jurado."""
+    ctx = request.app.state.ctx
+    demo = getattr(ctx, "demo", None)
+    if demo is not None:
+        return {"scenarios": demo.jury_scenarios()}
+    from ...demo.scenarios import build_jury_scenarios
+
+    return {
+        "scenarios": [
+            {
+                "name": s.name,
+                "description": s.description,
+                "kind": s.kind,
+                "expected_result": s.expected_result,
+            }
+            for s in build_jury_scenarios()
+        ]
+    }
+
+
+@router.post("/demo/scenario/{name}", dependencies=[Depends(require_control_token)])
+@router.post("/demo/scenarios/{name}", dependencies=[Depends(require_control_token)])
+async def demo_select_scenario(request: Request, name: str) -> dict[str, Any]:
+    """Selecciona un escenario especifico y fuerza modo jury."""
+    ctx = request.app.state.ctx
+    demo = getattr(ctx, "demo", None)
+    if demo is None:
+        return {"active": False, "mode": "auto", "source": "live", "badge": None}
+    if not demo.select_jury_scenario(name):
+        raise HTTPException(status_code=404, detail="scenario not found")
+    demo.tick(time.monotonic())
+    log.info("demo fallback: escenario jury -> %s (operador)", name)
+    st: dict[str, Any] = demo.status()
+    return st
+
+
 @router.get("/session/export")
 async def session_export(request: Request) -> dict[str, Any]:
     """Export auditable de la sesión actual (PRD-002).
@@ -628,6 +940,7 @@ async def session_export(request: Request) -> dict[str, Any]:
             exported_at=time.time(),
         ),
         settings=_safe_session_settings(ctx),
+        runtime_params=_runtime_params_snapshot(ctx),
         quotes=[
             cast(dict[str, Any], nb.model_dump(mode="json"))
             for nb in ctx.latest_norm.values()
@@ -835,7 +1148,9 @@ async def calibration_survival(
 
 @router.get("/projection")
 async def projection(
-    request: Request, mode: Literal["demo", "live"] = Query(default="demo")
+    request: Request,
+    mode: Literal["demo", "live"] = Query(default="demo"),
+    latency_ms: float | None = Query(default=None, ge=1.0, le=10_000.0),
 ) -> dict[str, Any]:
     """Projection Suite v2 — Capa 1: Break-even Frontier (Execution-Conditioned).
 
@@ -850,14 +1165,17 @@ async def projection(
     settings = getattr(ctx, "settings", None)
     cache_mode = "live" if mode == "live" and books is not None else "demo"
     result = await _cached_projection(
-        f"frontier:{cache_mode}", partial(build_frontier, settings, books, mode=mode)
+        f"frontier:{cache_mode}:lat={latency_ms}",
+        partial(build_frontier, settings, books, mode=mode, latency_ms=latency_ms),
     )
     return cast(dict[str, Any], result.model_dump(mode="json"))
 
 
 @router.get("/capacity")
 async def capacity(
-    request: Request, mode: Literal["demo", "live"] = Query(default="demo")
+    request: Request,
+    mode: Literal["demo", "live"] = Query(default="demo"),
+    fee_bps: float | None = Query(default=None, ge=0.0, le=100.0),
 ) -> dict[str, Any]:
     """Projection Suite v2 — Capa 2: Capacity Curve. Edge neto total vs capital `Q` (cóncava,
     satura y cae): `Q*` donde el edge marginal cruza 0 (capacidad por oportunidad) y hard
@@ -868,8 +1186,10 @@ async def capacity(
     books = _live_projection_books(ctx) if mode == "live" else None
     settings = getattr(ctx, "settings", None)
     cache_mode = "live" if mode == "live" and books is not None else "demo"
+    fee = fee_bps / 10_000.0 if fee_bps is not None else None
     result = await _cached_projection(
-        f"capacity:{cache_mode}", partial(build_capacity_curve, settings, books, mode=mode)
+        f"capacity:{cache_mode}:fee={fee_bps}",
+        partial(build_capacity_curve, settings, books, mode=mode, fee=fee),
     )
     return cast(dict[str, Any], result.model_dump(mode="json"))
 

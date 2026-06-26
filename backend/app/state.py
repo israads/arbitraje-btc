@@ -17,6 +17,7 @@ from .config import Settings
 from .models.enums import ConnectionStatus, OpportunityStatus
 from .models.market import NormalizedBook, RawOrderBook
 from .models.opportunity import Opportunity
+from .models.params import RuntimeParamOverrides
 from .stream.hub import StreamHub
 
 if TYPE_CHECKING:
@@ -76,6 +77,10 @@ class AppState:
     opp_counts: dict[str, int] = field(default_factory=_empty_funnel)
     recent_opps: deque[Opportunity] = field(default_factory=lambda: deque(maxlen=200))
     opps_by_id: dict[str, Opportunity] = field(default_factory=dict)
+    # Overrides de Strategy Lab. Por ahora son what-if/read-only para no mutar el motor vivo
+    # sin una accion explicita y auditable del operador.
+    runtime_params: RuntimeParamOverrides = field(default_factory=RuntimeParamOverrides)
+    runtime_revision: int = 0
     shadow_samples: deque[ShadowOpportunitySample] = field(init=False)
 
     def __post_init__(self) -> None:

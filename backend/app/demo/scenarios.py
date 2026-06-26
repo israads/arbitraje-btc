@@ -23,6 +23,8 @@ class JuryScenario:
     name: str
     description: str
     books: tuple[NormalizedBook, ...]
+    kind: str = "market"
+    expected_result: str | None = None
     peg_updates: tuple[PegUpdate, ...] = ()
     stale: bool = False
 
@@ -146,6 +148,53 @@ def build_jury_scenarios() -> tuple[JuryScenario, ...]:
                 ),
             ),
             peg_updates=(PegUpdate("USDT", 1.0),),
+            expected_result="slippage_over_limit",
+        ),
+        JuryScenario(
+            name="thin_book",
+            description=(
+                "Spread aparente fuerte, pero no hay profundidad suficiente "
+                "para el tamaño objetivo."
+            ),
+            books=(
+                _book(
+                    "bitstamp",
+                    bid=62_980.0,
+                    ask=63_000.0,
+                    asks=[(63_000.0, 0.03), (63_010.0, 0.02)],
+                    ts=1_700_000_000_006.0,
+                ),
+                _book(
+                    "kraken",
+                    bid=63_700.0,
+                    ask=63_720.0,
+                    bids=[(63_700.0, 0.03), (63_690.0, 0.02)],
+                    ts=1_700_000_000_006.0,
+                ),
+            ),
+            peg_updates=(PegUpdate("USDT", 1.0),),
+            expected_result="thin_book",
+        ),
+        JuryScenario(
+            name="order_failure",
+            description=(
+                "Ruta con Binance para validar rechazo de preflight/test-order "
+                "sin dinero real."
+            ),
+            books=(
+                _book(
+                    "binance",
+                    bid=62_980.0,
+                    ask=63_000.0,
+                    quote_ccy="USDT",
+                    factor=1.0,
+                    ts=1_700_000_000_007.0,
+                ),
+                _book("kraken", bid=63_650.0, ask=63_680.0, ts=1_700_000_000_007.0),
+            ),
+            kind="execution",
+            expected_result="preflight_or_test_order_reject",
+            peg_updates=(PegUpdate("USDT", 1.0),),
         ),
     )
 
@@ -172,9 +221,20 @@ class JuryScenarioPlayer:
     def n_scenarios(self) -> int:
         return len(self._scenarios)
 
+    def scenarios(self) -> tuple[JuryScenario, ...]:
+        return self._scenarios
+
     def reset(self) -> None:
         self._scenario_idx = 0
         self._repeat_idx = 0
+
+    def select(self, name: str) -> JuryScenario | None:
+        for idx, scenario in enumerate(self._scenarios):
+            if scenario.name == name:
+                self._scenario_idx = idx
+                self._repeat_idx = 0
+                return scenario
+        return None
 
     def next_frame(self) -> JuryFrame:
         scenario = self._scenarios[self._scenario_idx]

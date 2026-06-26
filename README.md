@@ -7,7 +7,7 @@
 <p align="center">
   <a href="#quickstart"><img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white"></a>
   <a href="#frontend"><img alt="Next.js" src="https://img.shields.io/badge/Next.js-14-111111?style=for-the-badge&logo=nextdotjs&logoColor=white"></a>
-  <a href="#calidad"><img alt="Tests" src="https://img.shields.io/badge/tests-425%20passing-16D67F?style=for-the-badge"></a>
+  <a href="#calidad"><img alt="Tests" src="https://img.shields.io/badge/tests-484%20passing-16D67F?style=for-the-badge"></a>
   <a href="#calidad"><img alt="Coverage" src="https://img.shields.io/badge/coverage-92.45%25-16D67F?style=for-the-badge"></a>
 </p>
 
@@ -104,7 +104,7 @@ Si sólo hay unos minutos para revisar el proyecto, esta es la ruta sugerida:
 3. Revisar la **Capacity Curve**: explica por qué más capital no siempre mejora el resultado.
 4. Revisar el **Forward Fan Chart**: comunica incertidumbre y no vende una curva falsa.
 5. Revisar el **Embudo**: cada descarte tiene motivo técnico, no desaparece del sistema.
-6. Ejecutar tests: `481 passed`.
+6. Ejecutar tests: `484 passed`.
 
 Lo más importante no es que aparezcan oportunidades verdes; es que el sistema sea capaz de decir
 con precisión cuándo una oportunidad aparente **no debe operarse**.
@@ -471,7 +471,7 @@ Estado verificado:
 
 | Gate | Resultado |
 |---|---|
-| Backend tests | `481 passed` |
+| Backend tests | `484 passed` |
 | Cobertura | `92.45%` (`--cov-fail-under=85`) |
 | Ruff | limpio |
 | Mypy strict | limpio |

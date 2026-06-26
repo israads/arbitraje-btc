@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { IconArrowNarrowRight, IconChecklist, IconScale, IconSend, IconShieldCheck } from '@tabler/icons-react';
 import { API_BASE } from '../lib/config';
-import type { OpportunityExplanation } from '../hooks/useStream';
+import type { OpportunityExplanation, StrategyLabParams } from '../hooks/useStream';
 import { SectionHeader, VenueTag } from './primitives';
 
 function money(n: number | null | undefined, signed = false): string {
@@ -70,6 +70,17 @@ interface TestOrderResult {
   exchange_response: Record<string, string | boolean | number | null>;
 }
 
+interface WhatIfResult {
+  what_if: OpportunityExplanation;
+  delta_net_usd: number | null;
+  diagnostics: {
+    filled_btc: number;
+    depth_limited: boolean;
+    slip_buy_rel: number;
+    slip_sell_rel: number;
+  };
+}
+
 interface ExecutionPayload {
   opportunity_id: string;
   venue: string;
@@ -110,10 +121,12 @@ function MiniMetric({
 
 export function OpportunityExplainDrawer({
   opportunityId,
+  strategyParams,
   opened,
   onClose,
 }: {
   opportunityId: string | null;
+  strategyParams?: StrategyLabParams;
   opened: boolean;
   onClose: () => void;
 }) {
@@ -125,6 +138,8 @@ export function OpportunityExplainDrawer({
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [preflightLoading, setPreflightLoading] = useState(false);
   const [testOrderLoading, setTestOrderLoading] = useState(false);
+  const [whatIf, setWhatIf] = useState<WhatIfResult | null>(null);
+  const [whatIfLoading, setWhatIfLoading] = useState(false);
 
   useEffect(() => {
     if (!opened || !opportunityId) return;
@@ -148,7 +163,40 @@ export function OpportunityExplainDrawer({
     setPreflight(null);
     setTestOrder(null);
     setExecutionError(null);
+    setWhatIf(null);
   }, [opportunityId]);
+
+  useEffect(() => {
+    if (!opened || !opportunityId || !strategyParams) return;
+    const ac = new AbortController();
+    setWhatIfLoading(true);
+    fetch(`${API_BASE}/api/v1/opportunities/${opportunityId}/what-if`, {
+      method: 'POST',
+      signal: ac.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        size_btc: strategyParams.size_btc,
+        fee_bps: strategyParams.fee_bps,
+        latency_ms: Math.round(strategyParams.latency_ms),
+        max_slippage: strategyParams.max_slippage,
+        expected_trades_per_rebalance: strategyParams.expected_trades_per_rebalance,
+      }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status}`);
+        return r.json() as Promise<WhatIfResult>;
+      })
+      .then(setWhatIf)
+      .catch((e: Error) => {
+        if (e.name !== 'AbortError') setWhatIf(null);
+      })
+      .finally(() => setWhatIfLoading(false));
+    return () => ac.abort();
+  }, [
+    opened,
+    opportunityId,
+    strategyParams,
+  ]);
 
   const delta = useMemo(() => {
     if (!data || data.naive.gross_usd == null || data.engine.net_usd == null) return null;
@@ -271,6 +319,26 @@ export function OpportunityExplainDrawer({
               color={(delta ?? 0) >= 0 ? 'brand.4' : 'red.4'}
             />
           </SimpleGrid>
+
+          {(whatIf || whatIfLoading) && (
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
+              <MiniMetric
+                label="What-if net"
+                value={whatIfLoading ? 'calculando' : money(whatIf?.what_if.engine.net_usd, true)}
+                color={(whatIf?.what_if.engine.net_usd ?? 0) >= 0 ? 'brand.4' : 'red.4'}
+              />
+              <MiniMetric
+                label="What-if delta"
+                value={whatIfLoading ? '—' : money(whatIf?.delta_net_usd, true)}
+                color={(whatIf?.delta_net_usd ?? 0) >= 0 ? 'brand.4' : 'red.4'}
+              />
+              <MiniMetric
+                label="Fill what-if"
+                value={whatIfLoading ? '—' : `${(whatIf?.diagnostics.filled_btc ?? 0).toFixed(5)} BTC`}
+                color={whatIf?.diagnostics.depth_limited ? 'yellow.4' : 'aqua.4'}
+              />
+            </SimpleGrid>
+          )}
 
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
             <MiniMetric label="Naive spread / BTC" value={money(data.naive.spread_usd_per_btc, true)} />
