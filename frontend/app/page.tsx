@@ -26,6 +26,7 @@ import { OpportunityExplainDrawer } from '../components/OpportunityExplainDrawer
 import { StrategyLabPanel } from '../components/StrategyLabPanel';
 import { NaiveVsEdgePanel } from '../components/NaiveVsEdgePanel';
 import { StoragePanel } from '../components/StoragePanel';
+import { ProbabilityLattice } from '../components/ProbabilityLattice';
 import { StatCard, AQUA } from '../components/primitives';
 
 function statusColor(s: ConnStatus): string {
@@ -326,6 +327,9 @@ export default function DashboardPage() {
               <ForwardFanChart forward={forward} />
             </Grid.Col>
           </Grid>
+
+          {/* Probability Lattice: el Monte Carlo forward como tablero de Galton animado */}
+          <ProbabilityLattice forward={forward} />
 
           <SurvivalCalibrationPanel report={survival} />
 
