@@ -307,6 +307,32 @@ export interface SurvivalCalibration {
   }[];
 }
 
+/** Naive-vs-edge: contraste agregado de sesión (GET /api/v1/analysis/naive-vs-edge).
+ * Lo que un detector de spreads ingenuo contaría como bruto vs el neto que el motor captura. */
+export interface RejectionBucket {
+  reason: string;
+  label: string;
+  count: number;
+  lost_gross_usd: number;
+}
+
+export interface NaiveVsEdgeReport {
+  sample_size: number;
+  naive_trades: number;
+  naive_gross_usd: number;
+  naive_gross_per_btc: number | null;
+  engine_trades: number;
+  engine_net_usd: number;
+  engine_net_per_btc: number | null;
+  naive_q_btc: number;
+  engine_q_btc: number;
+  overstatement_usd: number;
+  survival_rate: number | null;
+  rejections: RejectionBucket[];
+  dominant_rejection: string | null;
+  headline: string;
+}
+
 export interface StrategyLabParams {
   size_btc: number;
   fee_bps: number;
@@ -403,6 +429,7 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const [capacity, setCapacity] = useState<EdgeCapacity | null>(null);
   const [forward, setForward] = useState<ForwardProjection | null>(null);
   const [survival, setSurvival] = useState<SurvivalCalibration | null>(null);
+  const [naiveVsEdge, setNaiveVsEdge] = useState<NaiveVsEdgeReport | null>(null);
 
   const quotesBuf = useRef<Record<string, Quote>>({});
   const oppsBuf = useRef<Opportunity[]>([]);
@@ -546,6 +573,10 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       fetchJson<Pnl>(`${API_BASE}/api/v1/pnl`, opt).then(setPnl).catch(() => undefined);
       fetchJson<BreakerStatus>(`${API_BASE}/api/v1/control/status`, opt).then(setBreakers).catch(() => undefined);
       fetchJson<DemoStatus>(`${API_BASE}/api/v1/demo`, opt).then(setDemo).catch(() => undefined);
+      // Agregado de sesión: barato (suma sobre recent_opps) → con el poll ligero de 5s.
+      fetchJson<NaiveVsEdgeReport>(`${API_BASE}/api/v1/analysis/naive-vs-edge`, opt)
+        .then(setNaiveVsEdge)
+        .catch(() => undefined);
     };
     // Proyección viva: la frontier/capacity dependen del book actual (el backend cae a demo
     // sin ruta viva); forward re-muestrea la grabación. Fallos no rompen el resto.
@@ -581,6 +612,6 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
 
   return {
     status, quotes, opportunities, routeStats, detectedCount,
-    metrics, breakers, demo, pnl, validation, projection, capacity, forward, survival,
+    metrics, breakers, demo, pnl, validation, projection, capacity, forward, survival, naiveVsEdge,
   };
 }

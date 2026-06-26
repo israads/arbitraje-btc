@@ -1107,6 +1107,22 @@ async def integrity(request: Request) -> dict[str, Any]:
     return cast(dict[str, Any], checker.reports())
 
 
+@router.get("/analysis/naive-vs-edge")
+async def analysis_naive_vs_edge(request: Request) -> dict[str, Any]:
+    """Contraste agregado de sesion: lo que un detector de spreads ingenuo contaria como
+    ganancia bruta vs el neto que el motor realmente captura, con atribucion de la fuga por
+    razon de descarte. Es la tesis del proyecto hecha agregado, sobre `recent_opps`.
+
+    Forma: `NaiveVsEdgeReport`. Read-only, sin red ni reloj; agrega oportunidades ya evaluadas.
+    """
+    from ...analysis import build_naive_vs_edge
+
+    ctx = request.app.state.ctx
+    report = build_naive_vs_edge(list(ctx.recent_opps), ctx.settings)
+    result: dict[str, Any] = report.model_dump(mode="json")
+    return result
+
+
 @router.get("/validation")
 async def validation() -> dict[str, Any]:
     """Arnés de validación (C15 / STORY-012, FR-021): reconciliación del ejemplo del reto

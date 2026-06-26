@@ -24,6 +24,7 @@ import { ForwardFanChart } from '../components/ForwardFanChart';
 import { SurvivalCalibrationPanel } from '../components/SurvivalCalibrationPanel';
 import { OpportunityExplainDrawer } from '../components/OpportunityExplainDrawer';
 import { StrategyLabPanel } from '../components/StrategyLabPanel';
+import { NaiveVsEdgePanel } from '../components/NaiveVsEdgePanel';
 import { StatCard, AQUA } from '../components/primitives';
 
 function statusColor(s: ConnStatus): string {
@@ -185,7 +186,7 @@ export default function DashboardPage() {
   const [strategyParams, setStrategyParams] = useState(DEFAULT_STRATEGY_PARAMS);
   const {
     status, quotes, routeStats, detectedCount, metrics, breakers, demo, pnl, validation,
-    projection, capacity, forward, survival,
+    projection, capacity, forward, survival, naiveVsEdge,
   } = useStream(strategyParams);
   const spread = crossVenueSpread(quotes);
   const total = pnl?.total_pnl ?? 0;
@@ -279,9 +280,12 @@ export default function DashboardPage() {
           {/* Precios por exchange (ancho completo: 8 venues) */}
           <PricesTable quotes={quotes} />
 
-          {/* Charts incrementales */}
+          {/* Tesis bruto-vs-neto: agregado de sesión (naive vs edge) + series en vivo */}
           <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 6 }}>
+            <Grid.Col span={{ base: 12, md: 4 }}>
+              <NaiveVsEdgePanel report={naiveVsEdge} />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 4 }}>
               <LiveLineChart
                 title="Spread bruto cross-venue"
                 value={spread}
@@ -291,7 +295,7 @@ export default function DashboardPage() {
                 hint="best bid − best ask normalizados; >0 = cruce aparente (antes de fees)"
               />
             </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 6 }}>
+            <Grid.Col span={{ base: 12, md: 4 }}>
               <LiveLineChart
                 title="P&L total"
                 value={pnl?.total_pnl ?? null}
