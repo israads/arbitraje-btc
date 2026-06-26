@@ -449,21 +449,11 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     fetchJson<Metrics>(`${API_BASE}/api/v1/metrics`)
       .then((m) => { metricsBuf.current = m; dirty.current = true; })
       .catch(() => undefined);
-    // Reconciliación + invariantes y Break-even Frontier: deterministas → una sola vez.
+    // Reconciliación + invariantes: determinista → una sola vez. Las 4 proyecciones
+    // (projection/capacity/forward/survival) las dispara pullHeavy() abajo en el mismo mount,
+    // así que NO se piden aquí (evita 4 fetches duplicados al arrancar).
     fetchJson<ValidationReport>(`${API_BASE}/api/v1/validation`)
       .then(setValidation)
-      .catch(() => undefined);
-    fetchJson<EdgeFrontier>(projectionUrl(strategyParams))
-      .then(setProjection)
-      .catch(() => undefined);
-    fetchJson<EdgeCapacity>(capacityUrl(strategyParams))
-      .then(setCapacity)
-      .catch(() => undefined);
-    fetchJson<ForwardProjection>(forwardUrl(strategyParams))
-      .then(setForward)
-      .catch(() => undefined);
-    fetchJson<SurvivalCalibration>(survivalUrl(strategyParams))
-      .then(setSurvival)
       .catch(() => undefined);
 
     const es = new EventSource(`${API_BASE}/api/v1/stream`);

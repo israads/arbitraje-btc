@@ -309,8 +309,8 @@ export function ProbabilityLattice({ forward }: { forward: ForwardProjection | n
           Ejecutando el Monte Carlo forward… el tablero aparece cuando hay distribución terminal.
         </Text>
       ) : (
-        <Group align="stretch" gap="lg" wrap="nowrap" style={{ flexWrap: 'wrap' }}>
-          <Stack gap="md" style={{ minWidth: 150 }}>
+        <Group align="stretch" gap="lg" wrap="wrap">
+          <Stack gap="md" style={{ minWidth: 150, flex: '1 1 150px' }}>
             <LatticeStat label="Bolas lanzadas" value={`${stat.dropped}`} sub={`de ${TARGET_BALLS}`} />
             <LatticeStat
               label="Cayeron en verde"

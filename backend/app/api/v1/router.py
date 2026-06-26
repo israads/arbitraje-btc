@@ -3,7 +3,6 @@ vivo (`/quotes`, `/opportunities`). El resto son stubs hasta su story."""
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import time
@@ -34,7 +33,9 @@ log = logging.getLogger("app.api.v1")
 #   3) cache con TTL: cada cliente/recarga NO recomputa — se recalcula como mucho 1 vez por
 #      ventana, sin importar cuántos navegadores o polls lleguen (clave en 2 cores).
 _PROJECTION_SEM = asyncio.Semaphore(1)
-_PROJECTION_TTL = 20.0  # s — las proyecciones cambian lento; refresco sub-20s no aporta.
+# s — las proyecciones cambian lento. ≥ que el poll pesado del cliente (30s) para que el poll
+# en estado estacionario sirva de cache y no recompute Monte Carlo cada vez en el único worker.
+_PROJECTION_TTL = 35.0
 _PROJECTION_CACHE: dict[str, tuple[float, Any]] = {}
 _MIN_WHAT_IF_FILL_RATIO = 0.10
 
@@ -333,7 +334,7 @@ async def stream(request: Request) -> EventSourceResponse:
         async for ev in ctx.hub.subscribe():
             if await request.is_disconnected():
                 break
-            yield {"event": ev.type, "data": json.dumps(ev.data)}
+            yield {"event": ev.type, "data": ev.data_json}
 
     return EventSourceResponse(
         gen(),

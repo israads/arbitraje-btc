@@ -30,6 +30,8 @@ class StreamPublisher:
         self._last_pnl = 0.0
 
     def publish_quote(self, nb: NormalizedBook) -> None:
+        if self._hub.client_count == 0:
+            return  # sin suscriptores SSE: no construir el dict en la ruta caliente
         now = time.monotonic()
         if now - self._last_quote.get(nb.exchange, 0.0) < self._throttle:
             return
@@ -50,6 +52,8 @@ class StreamPublisher:
         )
 
     def publish_opportunity(self, opp: Opportunity) -> None:
+        if self._hub.client_count == 0:
+            return  # sin suscriptores SSE: evita model_dump por opp en la ruta caliente
         self._hub.publish(StreamEvent(type="opportunity", data=opp.model_dump(mode="json")))
 
     def publish_metrics(self, build: Callable[[], dict[str, Any]]) -> bool:
