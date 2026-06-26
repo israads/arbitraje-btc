@@ -79,9 +79,10 @@ def _sqlite_path(db_url: str) -> str | None:
     """Extrae la ruta del archivo de un db_url SQLite. None si es :memory: u otro motor."""
     if "sqlite" not in db_url or ":memory:" in db_url:
         return None
-    # sqlite+aiosqlite:///./arbitraje.db  ->  ./arbitraje.db
+    # sqlite+aiosqlite:///./arbitraje.db  ->  ./arbitraje.db   (descarta query params)
     _, _, tail = db_url.partition(":///")
-    return tail or None
+    path = tail.split("?", 1)[0]
+    return path or None
 
 
 def _disk_usage(path: str | None) -> tuple[int, int]:
@@ -101,8 +102,8 @@ def _disk_usage(path: str | None) -> tuple[int, int]:
 async def measure_storage(engine: AsyncEngine, db_url: str, retention_hours: float) -> StorageStats:
     """Mide el estado de almacenamiento y proyecta la estimación por retención.
 
-    Barato: usa `count(*)` (índice/scan acotado tras la poda) y la primera/última `created_at`
-    por PK para el span; no recorre toda la tabla salvo el count.
+    `count(*)` es O(filas): barato tras la poda (tabla pequeña), pero crece con el tamaño si la
+    retención está desactivada. El span se obtiene por PK (primera/última fila), que sí es O(1).
     """
     stats = StorageStats(retention_hours=retention_hours)
     stats.file_bytes, stats.disk_free_bytes = _disk_usage(_sqlite_path(db_url))
@@ -110,8 +111,12 @@ async def measure_storage(engine: AsyncEngine, db_url: str, retention_hours: flo
     async with engine.connect() as conn:
         stats.page_size = int((await conn.execute(text("PRAGMA page_size"))).scalar() or 0)
         stats.page_count = int((await conn.execute(text("PRAGMA page_count"))).scalar() or 0)
+        free_pages = int((await conn.execute(text("PRAGMA freelist_count"))).scalar() or 0)
         if not stats.file_bytes:
             stats.file_bytes = stats.page_size * stats.page_count
+        # Bytes "vivos": excluye páginas libres no recuperadas tras DELETE sin VACUUM, para no
+        # inflar bytes/fila (y la estimación) cuando el archivo quedó hinchado.
+        live_bytes = max(0, stats.page_count - free_pages) * stats.page_size
         opp_c = (await conn.execute(text("SELECT count(*) FROM opportunities"))).scalar()
         exec_c = (await conn.execute(text("SELECT count(*) FROM executions"))).scalar()
         stats.opp_rows = int(opp_c or 0)
@@ -126,8 +131,8 @@ async def measure_storage(engine: AsyncEngine, db_url: str, retention_hours: flo
                 stats.rows_per_second = stats.opp_rows / stats.span_seconds
 
     total_rows = stats.opp_rows + stats.exec_rows
-    if total_rows > 0 and stats.file_bytes > 0:
-        stats.bytes_per_row = stats.file_bytes / total_rows
+    if total_rows > 0 and live_bytes > 0:
+        stats.bytes_per_row = live_bytes / total_rows
 
     # Proyección en estado estacionario: filas/s × ventana × bytes/fila.
     if stats.rows_per_second > 0 and stats.bytes_per_row > 0:

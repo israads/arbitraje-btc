@@ -104,6 +104,20 @@ def test_rejections_grouped_and_dominant_by_count() -> None:
     assert len(rep.rejections) == 2
 
 
+def test_survival_rate_never_exceeds_one() -> None:
+    # Capturada con spread NEGATIVO: el ingenuo no la tradearía, no debe inflar el ratio.
+    opps = [
+        _opp("naive1", vwap_buy=100.0, vwap_sell=110.0, status=OpportunityStatus.discarded,
+             discard=DiscardReason.not_profitable_fees),
+        _opp("cap-neg", vwap_buy=100.0, vwap_sell=95.0, status=OpportunityStatus.captured, net=3.0),
+    ]
+    rep = build_naive_vs_edge(opps, _settings())
+    assert rep.naive_trades == 1
+    assert rep.engine_trades == 1          # se ejecutó
+    assert rep.survival_rate == 0.0        # pero no es overlap con lo que el ingenuo tradearía
+    assert rep.survival_rate <= 1.0
+
+
 def test_missing_vwap_is_ignored_for_naive() -> None:
     opps = [_opp("x", vwap_buy=None, vwap_sell=120.0, status=OpportunityStatus.discarded)]
     rep = build_naive_vs_edge(opps, _settings())

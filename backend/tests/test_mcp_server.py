@@ -23,17 +23,10 @@ async def test_tools_registered() -> None:
 async def test_get_returns_error_dict_on_conn_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """`_get` nunca lanza: ante un fallo de red devuelve un dict de error legible."""
 
-    class _Boom:
-        async def __aenter__(self):
-            return self
+    async def _boom(*a, **k):
+        raise httpx.ConnectError("refused")
 
-        async def __aexit__(self, *a):
-            return False
-
-        async def get(self, *a, **k):
-            raise httpx.ConnectError("refused")
-
-    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _Boom())
+    monkeypatch.setattr(server._client, "get", _boom)
     out = await server._get("/info")
     assert out["error"] == "connection_failed"
     assert "hint" in out

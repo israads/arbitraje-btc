@@ -64,7 +64,19 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
 
   const step = steps[i];
 
-  const locate = useCallback(() => {
+  // Sólo MEDIR (sin scroll): para los handlers de scroll/resize. Throttled por rAF.
+  const reposition = useCallback(() => {
+    const el = document.getElementById(step.id);
+    if (!el) {
+      setRect(null);
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+  }, [step.id]);
+
+  // Al cambiar de paso: scroll al elemento y medir una vez (no en cada scroll del usuario).
+  useEffect(() => {
     const el = document.getElementById(step.id);
     if (!el) {
       setRect(null);
@@ -72,19 +84,9 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
     }
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
-    // Tras el scroll, mide la posición.
-    window.setTimeout(
-      () => {
-        const r = el.getBoundingClientRect();
-        setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-      },
-      reduce ? 0 : 320,
-    );
-  }, [step.id]);
-
-  useEffect(() => {
-    locate();
-  }, [locate]);
+    const t = window.setTimeout(reposition, reduce ? 0 : 320);
+    return () => window.clearTimeout(t);
+  }, [step.id, reposition]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -92,16 +94,21 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
       else if (e.key === 'ArrowRight') setI((v) => Math.min(v + 1, steps.length - 1));
       else if (e.key === 'ArrowLeft') setI((v) => Math.max(v - 1, 0));
     };
-    const onResize = () => locate();
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('resize', onResize);
-    window.addEventListener('scroll', onResize, true);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('scroll', onResize, true);
+    let raf = 0;
+    const onMove = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(reposition);
     };
-  }, [locate, onClose, steps.length]);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onMove, true);
+    };
+  }, [reposition, onClose, steps.length]);
 
   const pad = 8;
   const last = i === steps.length - 1;
@@ -133,6 +140,9 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
         shadow="xl"
         radius="md"
         p="md"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Tour guiado: ${step.title}`}
         style={{
           position: 'fixed',
           top: popTop,

@@ -54,6 +54,7 @@ def build_naive_vs_edge(
     engine_trades = 0
     engine_net = 0.0
     engine_q = 0.0
+    engine_overlap = 0
     buckets: dict[str, tuple[int, float]] = {}
 
     for opp in opps:
@@ -72,6 +73,8 @@ def build_naive_vs_edge(
             engine_trades += 1
             engine_net += opp.net_pnl or 0.0
             engine_q += q
+            if naive_would_trade:
+                engine_overlap += 1  # capturadas que el ingenuo TAMBIÉN tradearía → para el ratio
         elif naive_would_trade and opp.status == OpportunityStatus.discarded:
             assert gross is not None
             reason = opp.discard_reason.value if opp.discard_reason else "unknown"
@@ -90,7 +93,8 @@ def build_naive_vs_edge(
     rejections.sort(key=lambda b: (b.count, b.lost_gross_usd), reverse=True)
     dominant = rejections[0].reason if rejections else None
 
-    survival = engine_trades / naive_trades if naive_trades > 0 else None
+    # Ratio honesto: de lo que el ingenuo tradearía, qué fracción captura el motor (∈ [0,1]).
+    survival = engine_overlap / naive_trades if naive_trades > 0 else None
     overstatement = naive_gross - engine_net
 
     return NaiveVsEdgeReport(

@@ -15,14 +15,20 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-# Prefijos exentos de auth/rate-limit (exploración y salud siempre abiertas).
-_EXEMPT_PREFIXES = ("/health", "/docs", "/redoc", "/openapi.json", "/metrics")
+# Prefijos exentos de auth/rate-limit: exploración, salud, métricas y el SSE de larga duración
+# (BaseHTTPMiddleware puede interferir con respuestas en streaming).
+_EXEMPT_PREFIXES = (
+    "/health", "/docs", "/redoc", "/openapi.json", "/metrics",
+    "/api/v1/stream", "/stream",
+)
+# Tope de IPs rastreadas a la vez: cota dura de memoria del rate limiter.
+_MAX_TRACKED_IPS = 4096
 
 
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """IP de origen real (peer TCP). NO se usa X-Forwarded-For: es controlable por el cliente
+    cuando no hay un proxy de confianza delante, lo que permitiría evadir el límite y crear
+    claves ilimitadas. Tras un proxy, configúralo allí o termina TLS con el peer correcto."""
     return request.client.host if request.client else "unknown"
 
 
@@ -35,6 +41,13 @@ class ApiGuardMiddleware(BaseHTTPMiddleware):
         self._rate = rate_limit_per_min
         self._hits: dict[str, deque[float]] = defaultdict(deque)
 
+    def _evict_stale(self, cutoff: float) -> None:
+        """Purga IPs cuyo último hit expiró: evita crecimiento de memoria sin tope."""
+        if len(self._hits) <= _MAX_TRACKED_IPS:
+            return
+        for ip in [k for k, b in self._hits.items() if not b or b[-1] < cutoff]:
+            del self._hits[ip]
+
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         path = request.url.path
         if request.method == "OPTIONS" or any(path.startswith(p) for p in _EXEMPT_PREFIXES):
@@ -45,8 +58,9 @@ class ApiGuardMiddleware(BaseHTTPMiddleware):
 
         if self._rate > 0:
             now = time.time()
-            bucket = self._hits[_client_ip(request)]
             cutoff = now - 60.0
+            self._evict_stale(cutoff)
+            bucket = self._hits[_client_ip(request)]
             while bucket and bucket[0] < cutoff:
                 bucket.popleft()
             if len(bucket) >= self._rate:

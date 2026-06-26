@@ -26,16 +26,18 @@ _TIMEOUT = 10.0
 
 mcp = FastMCP("arbitraje-btc")
 
+# Cliente reusado entre herramientas (pool de conexiones persistente, no uno por request).
+_HEADERS = {"X-API-Key": API_KEY} if API_KEY else {}
+_client = httpx.AsyncClient(base_url=_PREFIX, headers=_HEADERS, timeout=_TIMEOUT)
+
 
 async def _get(path: str, params: dict[str, Any] | None = None) -> Any:
     """GET a la API local. Devuelve JSON o un dict de error legible (nunca lanza al cliente MCP)."""
-    headers = {"X-API-Key": API_KEY} if API_KEY else {}
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            r = await client.get(f"{_PREFIX}{path}", params=params, headers=headers)
-            if r.status_code >= 400:
-                return {"error": f"HTTP {r.status_code}", "detail": r.text[:300], "path": path}
-            return r.json()
+        r = await _client.get(path, params=params)
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "detail": r.text[:300], "path": path}
+        return r.json()
     except httpx.HTTPError as exc:
         return {
             "error": "connection_failed",

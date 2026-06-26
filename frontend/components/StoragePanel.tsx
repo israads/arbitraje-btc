@@ -103,6 +103,7 @@ export function StoragePanel() {
       if (r.ok) {
         const data = await r.json();
         if (data.storage) setStats(data.storage);
+        else await load(); // respuesta sin storage → re-medir para no quedar con stats viejos
       }
     } catch {
       /* sin cambios si el backend rechaza */
