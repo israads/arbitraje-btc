@@ -16,6 +16,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.health import router as health_router
+from .api.security import ApiGuardMiddleware
 from .api.v1.router import router as v1_router
 from .backtest import Recorder
 from .bus import BoundedQueue
@@ -323,9 +324,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("shutdown complete")
 
 
+API_DESCRIPTION = """
+Motor de arbitraje BTC que no pregunta *dónde está más barato*, sino **cuánto queda después de
+ejecutar** con profundidad de libro, fees, latencia, inventario y peg de stablecoin.
+
+- **Correctitud:** reconciliación del ejemplo del reto ($109.75/BTC) + invariantes económicas.
+- **Honestidad:** la mayoría de los spreads no sobreviven a los costes — y el dashboard muestra
+  *exactamente dónde mueren*.
+- **Proyección:** break-even frontier, capacity curve y forward Monte Carlo (bootstrap estacionario,
+  PSR/DSR/MinTRL de López de Prado).
+
+Todo es simulación con datos públicos: ninguna operación con dinero real. Los endpoints de control
+y los overrides what-if no mutan umbrales operativos. Ver `GET /api/v1/info` para capacidades.
+"""
+
+API_VERSION = "0.1.0"
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Arbitraje BTC — Motor de ejecución honesto",
+        version=API_VERSION,
+        description=API_DESCRIPTION,
+        lifespan=lifespan,
+        contact={"name": "Israel Domínguez", "url": "https://github.com/israads/arbitraje-btc"},
+        license_info={"name": "Uso del challenge"},
+        openapi_tags=[
+            {"name": "mercado", "description": "Quotes, oportunidades y su explicación."},
+            {"name": "proyección", "description": "Frontier, capacity, forward y análisis."},
+            {"name": "control", "description": "Kill switch, demo y backtest (token opcional)."},
+            {"name": "config", "description": "Parámetros what-if y retención de almacenamiento."},
+            {"name": "sistema", "description": "Salud, métricas e información del servicio."},
+        ],
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -333,6 +365,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Protecciones opcionales de API (default OFF): se montan solo si están configuradas.
+    if settings.api_key or settings.api_rate_limit_per_min > 0:
+        app.add_middleware(
+            ApiGuardMiddleware,
+            api_key=settings.api_key,
+            rate_limit_per_min=settings.api_rate_limit_per_min,
+        )
 
     @app.get("/metrics", include_in_schema=False)
     async def prometheus_metrics(request: Request) -> Response:

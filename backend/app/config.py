@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     # Vacío ⇒ sin auth (dev/demo local). Si se setea (ARB_CONTROL_TOKEN), esos POST exigen el
     # header `X-Control-Token` — protección mínima antes de exponer el panel en público.
     control_token: str = ""
+    # API pública: protecciones opcionales (default OFF para dev/demo local; no rompen el frontend
+    # ni los tests). `api_key` vacío ⇒ sin auth; si se setea, las rutas /api/v1/* exigen header
+    # `X-API-Key` (salvo health/docs/openapi). `api_rate_limit_per_min`=0 ⇒ sin límite.
+    api_key: str = ""
+    api_rate_limit_per_min: int = 0
 
     # --- Exchanges / mercado ---
     exchanges: dict[str, ExchangeConfig] = Field(default_factory=_default_exchanges)

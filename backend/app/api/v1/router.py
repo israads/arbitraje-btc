@@ -410,6 +410,33 @@ async def params_reset(request: Request) -> dict[str, Any]:
     return _runtime_params_snapshot(ctx)
 
 
+@router.get("/info", tags=["sistema"])
+async def info(request: Request) -> dict[str, Any]:
+    """Metadata del servicio y capacidades — punto de entrada para clientes y el MCP server.
+
+    Read-only y barato: nombre, versión, modo (demo/live), venues habilitados y catálogo de
+    capacidades de consulta. No expone tokens ni credenciales.
+    """
+    ctx = request.app.state.ctx
+    settings = ctx.settings
+    demo = ctx.demo.status() if getattr(ctx, "demo", None) else {}
+    return {
+        "service": "arbitraje-btc",
+        "version": "0.1.0",
+        "thesis": "cuánto queda tras ejecutar con profundidad, fees, latencia, inventario y peg",
+        "mode": "demo" if demo.get("active") else "live",
+        "quote_target": settings.quote_target,
+        "enabled_venues": [e.id for e in settings.enabled_exchanges],
+        "capabilities": [
+            "quotes", "opportunities", "opportunity_explain", "naive_vs_edge",
+            "projection_frontier", "capacity", "forward_montecarlo", "survival_calibration",
+            "pnl", "metrics", "validation", "storage", "session_export",
+        ],
+        "docs": "/docs",
+        "openapi": "/openapi.json",
+    }
+
+
 @router.get("/storage")
 async def storage(request: Request) -> dict[str, Any]:
     """Uso de almacenamiento de la DB + estimación de retención.
