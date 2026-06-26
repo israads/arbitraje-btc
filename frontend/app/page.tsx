@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { AppShell, Badge, Box, Divider, Grid, Group, SimpleGrid, Stack, Text } from '@mantine/core';
+import { AppShell, Badge, Box, Button, Divider, Grid, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import {
   IconActivity,
   IconArrowDownRight,
   IconArrowUpRight,
   IconChartHistogram,
+  IconRoute,
   IconWallet,
 } from '@tabler/icons-react';
 import { DEFAULT_STRATEGY_PARAMS, useStream, type ConnStatus } from '../hooks/useStream';
@@ -27,6 +28,7 @@ import { StrategyLabPanel } from '../components/StrategyLabPanel';
 import { NaiveVsEdgePanel } from '../components/NaiveVsEdgePanel';
 import { StoragePanel } from '../components/StoragePanel';
 import { ProbabilityLattice } from '../components/ProbabilityLattice';
+import { GuidedTour, TOUR_STEPS } from '../components/GuidedTour';
 import { StatCard, AQUA } from '../components/primitives';
 
 function statusColor(s: ConnStatus): string {
@@ -193,6 +195,7 @@ export default function DashboardPage() {
   const spread = crossVenueSpread(quotes);
   const total = pnl?.total_pnl ?? 0;
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
+  const [tourOpen, setTourOpen] = useState(false);
 
   return (
     <AppShell header={{ height: 64 }} padding={{ base: 'sm', sm: 'lg' }}>
@@ -207,6 +210,16 @@ export default function DashboardPage() {
           <BrandMark />
           <HeaderStats quotes={quotes} detected={detectedCount} />
           <Group gap="xs" wrap="nowrap">
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="brand"
+              leftSection={<IconRoute size={15} />}
+              onClick={() => setTourOpen(true)}
+              visibleFrom="sm"
+            >
+              Tour
+            </Button>
             {demo.active && (
               <Badge color="orange" variant="light" visibleFrom="xs">
                 DEMO DATA
@@ -268,7 +281,7 @@ export default function DashboardPage() {
 
           {/* HERO: Edge Waterfall (prueba de correctitud) + Control del operador */}
           <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 7 }}>
+            <Grid.Col span={{ base: 12, md: 7 }} id="tour-edge-waterfall">
               <EdgeWaterfall report={validation} />
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 5 }}>
@@ -281,7 +294,7 @@ export default function DashboardPage() {
 
           {/* Tesis bruto-vs-neto: agregado de sesión (naive vs edge) + series en vivo */}
           <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 4 }}>
+            <Grid.Col span={{ base: 12, md: 4 }} id="tour-naive-edge">
               <NaiveVsEdgePanel report={naiveVsEdge} />
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 4 }}>
@@ -309,7 +322,7 @@ export default function DashboardPage() {
           {/* PROJECTION SUITE — Capa 1: Break-even Frontier (dónde sobrevive el edge) +
               Lifetime (¿somos suficientemente rápidos?). */}
           <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 7 }}>
+            <Grid.Col span={{ base: 12, md: 7 }} id="tour-frontier">
               <BreakEvenFrontier frontier={projection} />
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 5 }}>
@@ -323,19 +336,21 @@ export default function DashboardPage() {
             <Grid.Col span={{ base: 12, md: 5 }}>
               <CapacityCurve capacity={capacity} />
             </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 7 }}>
+            <Grid.Col span={{ base: 12, md: 7 }} id="tour-forward">
               <ForwardFanChart forward={forward} />
             </Grid.Col>
           </Grid>
 
           {/* Probability Lattice: el Monte Carlo forward como tablero de Galton animado */}
-          <ProbabilityLattice forward={forward} />
+          <Box id="tour-lattice">
+            <ProbabilityLattice forward={forward} />
+          </Box>
 
           <SurvivalCalibrationPanel report={survival} />
 
           {/* Configuración: almacenamiento + retención de la base de datos */}
           <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 7 }}>
+            <Grid.Col span={{ base: 12, md: 7 }} id="tour-config">
               <StoragePanel />
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 5 }}>
@@ -359,6 +374,7 @@ export default function DashboardPage() {
         opened={selectedOpportunityId != null}
         onClose={() => setSelectedOpportunityId(null)}
       />
+      {tourOpen && <GuidedTour steps={TOUR_STEPS} onClose={() => setTourOpen(false)} />}
     </AppShell>
   );
 }
