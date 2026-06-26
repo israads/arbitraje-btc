@@ -28,6 +28,7 @@ import { StrategyLabPanel } from '../components/StrategyLabPanel';
 import { NaiveVsEdgePanel } from '../components/NaiveVsEdgePanel';
 import { StoragePanel } from '../components/StoragePanel';
 import { ProbabilityLattice } from '../components/ProbabilityLattice';
+import { RelationshipGraph } from '../components/RelationshipGraph';
 import { GuidedTour, TOUR_STEPS } from '../components/GuidedTour';
 import { StatCard, AQUA } from '../components/primitives';
 
@@ -357,6 +358,9 @@ export default function DashboardPage() {
               <StrategyLabPanel params={strategyParams} onApply={setStrategyParams} />
             </Grid.Col>
           </Grid>
+
+          {/* Grafo de rutas de arbitraje (venues × edge neto) */}
+          <RelationshipGraph routeStats={routeStats} />
 
           {/* Embudo de decisiones */}
           <FunnelPanel metrics={metrics} />
