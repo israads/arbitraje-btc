@@ -25,6 +25,7 @@ import { SurvivalCalibrationPanel } from '../components/SurvivalCalibrationPanel
 import { OpportunityExplainDrawer } from '../components/OpportunityExplainDrawer';
 import { StrategyLabPanel } from '../components/StrategyLabPanel';
 import { NaiveVsEdgePanel } from '../components/NaiveVsEdgePanel';
+import { StoragePanel } from '../components/StoragePanel';
 import { StatCard, AQUA } from '../components/primitives';
 
 function statusColor(s: ConnStatus): string {
@@ -264,15 +265,12 @@ export default function DashboardPage() {
             />
           </SimpleGrid>
 
-          {/* HERO: Edge Waterfall + Strategy Lab + Control del operador */}
+          {/* HERO: Edge Waterfall (prueba de correctitud) + Control del operador */}
           <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 6 }}>
+            <Grid.Col span={{ base: 12, md: 7 }}>
               <EdgeWaterfall report={validation} />
             </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 3 }}>
-              <StrategyLabPanel params={strategyParams} onApply={setStrategyParams} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 3 }}>
+            <Grid.Col span={{ base: 12, md: 5 }}>
               <ControlPanel breakers={breakers} demo={demo} />
             </Grid.Col>
           </Grid>
@@ -330,6 +328,16 @@ export default function DashboardPage() {
           </Grid>
 
           <SurvivalCalibrationPanel report={survival} />
+
+          {/* Configuración: almacenamiento + retención de la base de datos */}
+          <Grid gutter="lg" align="stretch">
+            <Grid.Col span={{ base: 12, md: 7 }}>
+              <StoragePanel />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 5 }}>
+              <StrategyLabPanel params={strategyParams} onApply={setStrategyParams} />
+            </Grid.Col>
+          </Grid>
 
           {/* Embudo de decisiones */}
           <FunnelPanel metrics={metrics} />

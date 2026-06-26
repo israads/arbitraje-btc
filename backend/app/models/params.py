@@ -24,6 +24,11 @@ class RuntimeParamOverrides(BaseModel):
     enabled_exchange_overrides: dict[str, bool] = Field(default_factory=dict)
 
 
+class RetentionRequest(BaseModel):
+    retention_hours: float = Field(ge=0.0, le=168.0)  # 0 = sin límite; tope 7 días
+    vacuum: bool = False
+
+
 class WhatIfRequest(BaseModel):
     size_btc: float | None = Field(default=None, gt=0.0)
     fee_bps: float | None = Field(default=None, ge=0.0)

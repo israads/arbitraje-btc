@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .bus import BoundedQueue
 from .config import Settings
@@ -62,6 +62,8 @@ class AppState:
     simulator: ExecutionSimulator | None = None  # C9 — simulador de ejecución (STORY-009)
     portfolio: Portfolio | None = None  # C10 — inventario pre-posicionado + P&L (STORY-010)
     writer: BatchWriter | None = None   # C12 — escritor async/batch (STORY-011)
+    db_engine: Any = None               # C12 — AsyncEngine, para poda/medición de almacenamiento
+    db_retention_hours: float = 24.0    # C12 — retención activa (mutable en caliente vía endpoint)
     integrity: BookIntegrityChecker | None = None  # C2 — integridad de book (STORY-015)
     breakers: BreakerManager | None = None  # C8 — circuit breakers + kill switch (STORY-018)
     recorder: Recorder | None = None    # C14 — grabador de ticks para replay (STORY-021)

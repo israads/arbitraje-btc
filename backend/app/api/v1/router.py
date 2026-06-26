@@ -17,7 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from ...models.enums import DiscardReason, OpportunityStatus
 from ...models.metrics import MetricsSnapshot
-from ...models.params import RuntimeParamOverrides, WhatIfRequest
+from ...models.params import RetentionRequest, RuntimeParamOverrides, WhatIfRequest
 from ...models.preflight import PreflightRequest, TestOrderRequest
 from ...models.session import SessionExport, SessionMetadata
 from ...models.strategy import StrategyInfo
@@ -408,6 +408,45 @@ async def params_reset(request: Request) -> dict[str, Any]:
     ctx.runtime_revision = getattr(ctx, "runtime_revision", 0) + 1
     _PROJECTION_CACHE.clear()
     return _runtime_params_snapshot(ctx)
+
+
+@router.get("/storage")
+async def storage(request: Request) -> dict[str, Any]:
+    """Uso de almacenamiento de la DB + estimación de retención.
+
+    Mide tamaño real, tasa de inserción y bytes/fila desde la propia DB, y proyecta el tamaño
+    en estado estacionario para 1/6/12/18/24 h. Read-only.
+    """
+    from ...store.retention import measure_storage
+
+    ctx = request.app.state.ctx
+    engine = getattr(ctx, "db_engine", None)
+    if engine is None:
+        raise HTTPException(status_code=503, detail="db not initialized")
+    hours = getattr(ctx, "db_retention_hours", ctx.settings.db_retention_hours)
+    stats = await measure_storage(engine, ctx.settings.db_url, hours)
+    return stats.to_dict()
+
+
+@router.patch("/storage/retention", dependencies=[Depends(require_control_token)])
+async def storage_retention(request: Request, body: RetentionRequest) -> dict[str, Any]:
+    """Cambia la ventana de retención en caliente (0 = sin límite) y poda de inmediato.
+
+    Es operación de mantenimiento real (afecta la poda), no what-if: el operador decide cuánto
+    histórico conservar segun el espacio en disco.
+    """
+    from ...store.retention import measure_storage, prune_old_rows
+
+    ctx = request.app.state.ctx
+    engine = getattr(ctx, "db_engine", None)
+    if engine is None:
+        raise HTTPException(status_code=503, detail="db not initialized")
+    ctx.db_retention_hours = body.retention_hours
+    deleted = await prune_old_rows(
+        engine, body.retention_hours, vacuum=body.vacuum or ctx.settings.db_vacuum_on_prune
+    )
+    stats = await measure_storage(engine, ctx.settings.db_url, body.retention_hours)
+    return {"deleted": deleted, "storage": stats.to_dict()}
 
 
 @router.get("/opportunities")

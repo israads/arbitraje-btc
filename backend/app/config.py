@@ -227,6 +227,11 @@ class Settings(BaseSettings):
     db_url: str = "sqlite+aiosqlite:///./arbitraje.db"
     store_batch_size: int = 100
     store_flush_seconds: float = 1.0
+    # Retención: las opportunities se insertan a ~36/s; sin poda la DB crece sin límite
+    # (~28 MB/h, ~670 MB/día). `db_retention_hours`=0 → sin límite (comportamiento previo).
+    db_retention_hours: float = 24.0
+    db_prune_interval_s: float = 300.0  # cada cuánto corre la poda de fondo
+    db_vacuum_on_prune: bool = False    # VACUUM tras podar (recupera espacio en disco; costoso)
 
     @property
     def enabled_exchanges(self) -> list[ExchangeConfig]:

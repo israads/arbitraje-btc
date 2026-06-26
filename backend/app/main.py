@@ -89,6 +89,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         flush_seconds=settings.store_flush_seconds,
     )
     ctx.writer.start()
+    ctx.db_engine = _db_engine
+
+    async def _retention_loop() -> None:
+        """Poda periódica: mantiene la DB acotada a `db_retention_hours` (0 = sin límite).
+        Best-effort y fuera del camino caliente; lee la retención de ctx para reflejar cambios
+        en caliente vía endpoint."""
+        from .store.retention import prune_old_rows
+        while True:
+            await asyncio.sleep(settings.db_prune_interval_s)
+            hours = getattr(ctx, "db_retention_hours", settings.db_retention_hours)
+            await prune_old_rows(_db_engine, hours, vacuum=settings.db_vacuum_on_prune)
+
+    ctx.db_retention_hours = settings.db_retention_hours
+    if settings.db_retention_hours > 0:
+        ctx.tasks.append(asyncio.create_task(_retention_loop(), name="db_retention"))
 
     def _move_viable_to_discarded() -> None:
         """Reconcilia el embudo cuando una opp ya contada como `viable` se descarta: retira el
