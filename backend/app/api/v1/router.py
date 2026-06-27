@@ -411,6 +411,49 @@ async def params_reset(request: Request) -> dict[str, Any]:
     return _runtime_params_snapshot(ctx)
 
 
+@router.get("/analysis/wins", tags=["proyección"])
+async def analysis_wins(
+    request: Request, limit: int = Query(default=50, ge=1, le=500)
+) -> dict[str, Any]:
+    """Evidencia de ganancias: oportunidades CAPTURADAS y rentables (net > 0), persistidas.
+
+    Es el registro de los spreads que SÍ sobrevivieron a los costes — prueba de que el motor no
+    solo descarta, también captura cuando hay edge real. Lee de la DB (sobrevive reinicios).
+    """
+    ctx = request.app.state.ctx
+    writer = ctx.writer
+    if writer is None:
+        return {"wins": [], "count": 0, "total_net_usd": 0.0, "best_net_per_btc": None}
+    rows = await writer.get_opportunities(limit=limit, status="captured")
+    wins: list[dict[str, Any]] = []
+    total = 0.0
+    best_per_btc: float | None = None
+    for r in rows:
+        net = r.get("net_pnl")
+        if net is None or net <= 0:
+            continue
+        q = r.get("q_target") or 0.0
+        per_btc = net / q if q > 0 else None
+        total += net
+        if per_btc is not None and (best_per_btc is None or per_btc > best_per_btc):
+            best_per_btc = per_btc
+        wins.append({
+            "id": r.get("id"),
+            "created_at": r.get("created_at"),
+            "buy_venue": r.get("buy_venue"),
+            "sell_venue": r.get("sell_venue"),
+            "q_target": q,
+            "net_usd": net,
+            "net_per_btc": per_btc,
+        })
+    return {
+        "wins": wins,
+        "count": len(wins),
+        "total_net_usd": total,
+        "best_net_per_btc": best_per_btc,
+    }
+
+
 @router.get("/info", tags=["sistema"])
 async def info(request: Request) -> dict[str, Any]:
     """Metadata del servicio y capacidades — punto de entrada para clientes y el MCP server.

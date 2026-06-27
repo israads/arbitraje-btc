@@ -28,6 +28,7 @@ import { OpportunityExplainDrawer } from '../components/OpportunityExplainDrawer
 import { StrategyLabPanel } from '../components/StrategyLabPanel';
 import { NaiveVsEdgePanel } from '../components/NaiveVsEdgePanel';
 import { StoragePanel } from '../components/StoragePanel';
+import { WinsPanel } from '../components/WinsPanel';
 import { ProbabilityLattice } from '../components/ProbabilityLattice';
 import { RelationshipGraph } from '../components/RelationshipGraph';
 import { GuidedTour, TOUR_STEPS } from '../components/GuidedTour';
@@ -193,7 +194,7 @@ export default function DashboardPage() {
   const [strategyParams, setStrategyParams] = useState(DEFAULT_STRATEGY_PARAMS);
   const {
     status, quotes, routeStats, detectedCount, metrics, breakers, demo, pnl, validation,
-    projection, capacity, forward, survival, naiveVsEdge,
+    projection, capacity, forward, survival, naiveVsEdge, wins,
   } = useStream(strategyParams);
   const spread = crossVenueSpread(quotes);
   const total = pnl?.total_pnl ?? 0;
@@ -335,6 +336,9 @@ export default function DashboardPage() {
               />
             </Grid.Col>
           </Grid>
+
+          {/* Evidencia de ganancias: spreads capturados rentables (registro persistente) */}
+          <WinsPanel report={wins} />
 
           {/* PROJECTION SUITE — Capa 1: Break-even Frontier (dónde sobrevive el edge) +
               Lifetime (¿somos suficientemente rápidos?). */}

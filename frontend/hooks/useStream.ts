@@ -333,6 +333,24 @@ export interface NaiveVsEdgeReport {
   headline: string;
 }
 
+/** Evidencia de ganancias: spreads capturados rentables (GET /api/v1/analysis/wins). */
+export interface Win {
+  id: string;
+  created_at: number;
+  buy_venue: string;
+  sell_venue: string;
+  q_target: number;
+  net_usd: number;
+  net_per_btc: number | null;
+}
+
+export interface WinsReport {
+  wins: Win[];
+  count: number;
+  total_net_usd: number;
+  best_net_per_btc: number | null;
+}
+
 export interface StrategyLabParams {
   size_btc: number;
   fee_bps: number;
@@ -430,6 +448,7 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const [forward, setForward] = useState<ForwardProjection | null>(null);
   const [survival, setSurvival] = useState<SurvivalCalibration | null>(null);
   const [naiveVsEdge, setNaiveVsEdge] = useState<NaiveVsEdgeReport | null>(null);
+  const [wins, setWins] = useState<WinsReport | null>(null);
 
   const quotesBuf = useRef<Record<string, Quote>>({});
   const oppsBuf = useRef<Opportunity[]>([]);
@@ -579,6 +598,9 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       fetchJson<NaiveVsEdgeReport>(`${API_BASE}/api/v1/analysis/naive-vs-edge`, opt)
         .then(setNaiveVsEdge)
         .catch(() => undefined);
+      fetchJson<WinsReport>(`${API_BASE}/api/v1/analysis/wins?limit=50`, opt)
+        .then(setWins)
+        .catch(() => undefined);
     };
     // Proyección viva: la frontier/capacity dependen del book actual (el backend cae a demo
     // sin ruta viva); forward re-muestrea la grabación. Fallos no rompen el resto.
@@ -615,5 +637,6 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   return {
     status, quotes, opportunities, routeStats, detectedCount,
     metrics, breakers, demo, pnl, validation, projection, capacity, forward, survival, naiveVsEdge,
+    wins,
   };
 }
