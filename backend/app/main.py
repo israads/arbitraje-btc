@@ -28,6 +28,7 @@ from .ingest import build_ingestors, run_ingestors
 from .integrity.checker import BookIntegrityChecker
 from .logging_config import configure_logging
 from .metrics import MetricsCollector, render_prometheus
+from .models.config import SimConfig
 from .models.enums import DiscardReason, OpportunityStatus
 from .models.market import NormalizedBook, RawOrderBook
 from .models.opportunity import Opportunity
@@ -38,6 +39,7 @@ from .runner import Runner
 from .sim import ExecutionSimulator, Portfolio, Rebalancer
 from .state import AppState
 from .store import BatchWriter, init_db, make_engine
+from .store.config_store import apply_sim_config, load_app_config
 from .stream.hub import StreamHub
 from .stream.pump import StreamPublisher
 
@@ -55,6 +57,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "startup app=%s env=%s exchanges=%s",
         settings.app_name, settings.env, [e.id for e in settings.enabled_exchanges],
     )
+
+    # Persistencia + CONFIGURACIÓN BASE: se crea el engine y se aplica la config persistida a
+    # `settings` ANTES de construir el motor/portfolio, para que usen los balances/fees/venues
+    # guardados por el operador (es la config base real, no what-if).
+    _db_engine = make_engine(settings.db_url)
+    await init_db(_db_engine)
+    ctx.db_engine = _db_engine
+    _persisted = await load_app_config(_db_engine)
+    if _persisted:
+        applied = apply_sim_config(settings, SimConfig.model_validate(_persisted))
+        if applied:
+            log.info("config base aplicada: %s", ", ".join(applied))
 
     # C3 — peg + normalizador (STORY-003); C4 bus + C5 detector (STORY-004).
     ctx.peg = PegProvider(target=settings.quote_target, tolerance=settings.peg_tolerance)
@@ -78,19 +92,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         metrics_throttle_ms=settings.metrics_emit_ms,
     )
 
-    # C12 (STORY-011): persistencia async/batch. La URL sale de settings (pydantic ya resuelve
-    # el override `ARB_DB_URL` → :memory: en tests, sin tocar os.environ aquí). Las tablas se
-    # crean de forma idempotente. El BatchWriter arranca su task de flushing y se cuelga de ctx
-    # para que los endpoints REST puedan consultarlo.
-    _db_engine = make_engine(settings.db_url)
-    await init_db(_db_engine)
+    # C12 (STORY-011): escritor async/batch sobre el engine ya creado arriba. El BatchWriter
+    # arranca su task de flushing y se cuelga de ctx para que los endpoints REST lo consulten.
     ctx.writer = BatchWriter(
         engine=_db_engine,
         batch_size=settings.store_batch_size,
         flush_seconds=settings.store_flush_seconds,
     )
     ctx.writer.start()
-    ctx.db_engine = _db_engine
 
     async def _retention_loop() -> None:
         """Poda periódica: mantiene la DB acotada a `db_retention_hours` (0 = sin límite).

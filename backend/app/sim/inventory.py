@@ -182,6 +182,19 @@ class Portfolio:
             self.initial_quote_total += cfg.initial_quote
             self.initial_btc_total += cfg.initial_btc
 
+    def reseed(self) -> None:
+        """Re-siembra los balances desde la config actual (tras cambiar la config base). Resetea
+        inventario, P&L y la curva de equity: es un nuevo punto de partida con los nuevos fondos."""
+        self.venues.clear()
+        self.realized_pnl = 0.0
+        self.initial_quote_total = 0.0
+        self.initial_btc_total = 0.0
+        self.equity_series.clear()
+        self.rebalance_count = 0
+        self.rebalance_cost_total = 0.0
+        self.rebalance_events.clear()
+        self._seed_from_config()
+
     def _venue(self, venue: str) -> VenueBalance | None:
         return self.venues.get(venue)
 

@@ -32,6 +32,7 @@ import { StrategyLabPanel } from '../components/StrategyLabPanel';
 import { NaiveVsEdgePanel } from '../components/NaiveVsEdgePanel';
 import { StoragePanel } from '../components/StoragePanel';
 import { WinsPanel } from '../components/WinsPanel';
+import { ConfigPanel } from '../components/ConfigPanel';
 import { ProbabilityLattice } from '../components/ProbabilityLattice';
 import { RelationshipGraph } from '../components/RelationshipGraph';
 import { GuidedTour, TOUR_STEPS } from '../components/GuidedTour';
@@ -391,8 +392,11 @@ export default function DashboardPage() {
             <Tabs.Panel value="operacion">
               <Stack gap="lg">
                 <ControlPanel breakers={breakers} demo={demo} />
+                <Box id="tour-config">
+                  <ConfigPanel />
+                </Box>
                 <Grid gutter="lg" align="stretch">
-                  <Grid.Col span={{ base: 12, md: 7 }} id="tour-config">
+                  <Grid.Col span={{ base: 12, md: 7 }}>
                     <StoragePanel />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, md: 5 }}>

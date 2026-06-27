@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from sse_starlette.sse import EventSourceResponse
 
+from ...models.config import SimConfig
 from ...models.enums import DiscardReason, OpportunityStatus
 from ...models.metrics import MetricsSnapshot
 from ...models.params import RetentionRequest, RuntimeParamOverrides, WhatIfRequest
@@ -452,6 +453,70 @@ async def analysis_wins(
         "total_net_usd": total,
         "best_net_per_btc": best_per_btc,
     }
+
+
+def _sim_config_snapshot(ctx: Any) -> dict[str, Any]:
+    """Config base editable actual (de settings): balances/fees/venues + umbrales económicos."""
+    s = ctx.settings
+    return {
+        "exchanges": {
+            key: {
+                "enabled": cfg.enabled,
+                "fee_taker": cfg.fee_taker,
+                "fee_bps": cfg.fee_taker * 10_000.0,
+                "initial_btc": cfg.initial_btc,
+                "initial_quote": cfg.initial_quote,
+                "quote_ccy": cfg.quote_ccy,
+                "symbol": cfg.symbol,
+            }
+            for key, cfg in s.exchanges.items()
+        },
+        "default_trade_qty_btc": s.default_trade_qty_btc,
+        "min_net_profit_usd": s.min_net_profit_usd,
+        "max_slippage": s.max_slippage,
+        "exec_latency_ms": s.exec_latency_ms,
+    }
+
+
+@router.get("/config/sim", tags=["config"])
+async def config_sim(request: Request) -> dict[str, Any]:
+    """Configuración base editable de la simulación (balances, fees, venues, umbrales)."""
+    return _sim_config_snapshot(request.app.state.ctx)
+
+
+@router.put("/config/sim", tags=["config"], dependencies=[Depends(require_control_token)])
+async def config_sim_put(request: Request, body: SimConfig) -> dict[str, Any]:
+    """Guarda la configuración BASE (persistente) y la aplica al motor en caliente.
+
+    A diferencia de /params (what-if read-only), esto SÍ cambia la config real: muta
+    fees/venues/umbrales en settings y re-siembra el portfolio con los nuevos balances. Persiste
+    en la DB, así sobrevive reinicios. Sigue siendo simulación: no opera con dinero real.
+    """
+    from ...models.config import SimConfig as _SimConfig
+    from ...store.config_store import apply_sim_config, load_app_config, save_app_config
+
+    ctx = request.app.state.ctx
+    engine = ctx.db_engine
+    if engine is None:
+        raise HTTPException(status_code=503, detail="db not initialized")
+
+    # Merge sobre lo ya persistido (envíos parciales no borran lo anterior).
+    persisted = await load_app_config(engine)
+    base = _SimConfig.model_validate(persisted) if persisted else _SimConfig()
+    incoming = body.model_dump(exclude_unset=True)
+    merged_ex = {**base.exchanges}
+    for venue, ov in body.exchanges.items():
+        prev = merged_ex.get(venue)
+        merged_ex[venue] = prev.model_copy(update=ov.model_dump(exclude_unset=True)) if prev else ov
+    merged = base.model_copy(update={k: v for k, v in incoming.items() if k != "exchanges"})
+    merged.exchanges = merged_ex
+
+    applied = apply_sim_config(ctx.settings, merged)
+    await save_app_config(engine, merged.model_dump(mode="json", exclude_none=True))
+    if ctx.portfolio is not None:
+        ctx.portfolio.reseed()  # balances nuevos → punto de partida limpio
+    _PROJECTION_CACHE.clear()
+    return {"applied": applied, "config": _sim_config_snapshot(ctx)}
 
 
 @router.get("/info", tags=["sistema"])
