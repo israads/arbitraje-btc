@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Badge, Card, Table, Text } from '@mantine/core';
 import { IconBuildingBank } from '@tabler/icons-react';
 import type { Quote } from '../hooks/useStream';
@@ -59,7 +59,9 @@ function PriceCell({ value, best }: { value: number | null; best: boolean }) {
   );
 }
 
-export function PricesTable({ quotes }: { quotes: Record<string, Quote> }) {
+export const PricesTable = memo(PricesTableImpl);
+
+function PricesTableImpl({ quotes }: { quotes: Record<string, Quote> }) {
   const rows = Object.values(quotes).sort((a, b) => a.exchange.localeCompare(b.exchange));
   const asks = rows.map((q) => q.usd_ask).filter((x): x is number => x != null);
   const bids = rows.map((q) => q.usd_bid).filter((x): x is number => x != null);

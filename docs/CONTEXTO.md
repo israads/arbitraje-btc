@@ -83,12 +83,13 @@ tour guiado, Relationship Graph.
 - Modo replay/timeline con supervivencia observada por latencia.
 - MCP remoto (HTTP/SSE + auth) si se quiere acceso fuera de la máquina local.
 
-**Deuda técnica conocida (de auditoría adversarial, diferida por riesgo/valor):**
-- `useStream` usa un único flag `dirty`: un tick de quote re-renderiza todas las slices
-  (incl. clon del Map de routeStats). Mejora: flags por slice + `React.memo` en paneles hoja
-  (OpportunitiesTable/FunnelPanel/PricesTable). Riesgo medio; el patrón rAF ya capa a frame rate.
+**Deuda técnica conocida:**
+- ~~`useStream` flag `dirty` único~~ → RESUELTO: flags por slice (dirtyQuotes/Opps/Metrics) +
+  `React.memo` en PricesTable/OpportunitiesTable/FunnelPanel. Un tick de quote ya no re-renderiza
+  opps/routeStats/metrics.
 - `AppState` es un god-object (~25 campos) y el router accede con `getattr(...,default)` disperso.
-  Mejora: separar servicios del pipeline vs estado de mercado + accesores tipados. Riesgo medio.
+  Mejora: separar servicios del pipeline vs estado de mercado + accesores tipados. Riesgo medio
+  (refactor amplio, no funcional) — pendiente.
 
 ## Convenciones
 

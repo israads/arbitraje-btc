@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { ActionIcon, Badge, Card, Group, Table, Text, Tooltip } from '@mantine/core';
 import { IconArrowNarrowRight, IconInfoCircle, IconTargetArrow } from '@tabler/icons-react';
 import type { RouteStat } from '../hooks/useStream';
@@ -48,7 +48,9 @@ function fmt(n: number | null | undefined, signed = false): string {
  *  · % viable     → de las detecciones de esa ruta, cuántas pasaron el filtro neto.
  * Orden estable por neto desc (sin parpadeo).
  */
-export function OpportunitiesTable({
+export const OpportunitiesTable = memo(OpportunitiesTableImpl);
+
+function OpportunitiesTableImpl({
   routeStats,
   detectedCount,
   onExplain,

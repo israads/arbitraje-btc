@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { Badge, Card, Grid, Group, Progress, Stack, Table, Text, Title } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import type { Metrics } from '../hooks/useStream';
@@ -33,7 +34,9 @@ const STAGES: { key: keyof Metrics; label: string; color: string }[] = [
  * Embudo del jurado (C13): detectadas→viables→ejecutables→capturadas con motivo de
  * descarte, microestructura (effective/expected/realized/impact) y latencia p50/p99.
  */
-export function FunnelPanel({ metrics }: { metrics: Metrics | null }) {
+export const FunnelPanel = memo(FunnelPanelImpl);
+
+function FunnelPanelImpl({ metrics }: { metrics: Metrics | null }) {
   const m = metrics;
   const detected = m?.detected ?? 0;
   const reasons = Object.entries(m?.discard_reasons ?? {}).sort((a, b) => b[1] - a[1]);

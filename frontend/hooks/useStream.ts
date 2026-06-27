@@ -436,18 +436,22 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const routeStatsRef = useRef<Map<string, RouteStat>>(new Map());
   const detectedRef = useRef(0);
   const metricsBuf = useRef<Metrics | null>(null);
-  const dirty = useRef(false);
+  // Flags de "sucio" POR SLICE: un tick de quote (10/s) no debe re-renderizar opps/routeStats
+  // (que clona todo el Map) ni metrics. Cada rAF vuelca sólo lo que cambió.
+  const dirtyQuotes = useRef(false);
+  const dirtyOpps = useRef(false);
+  const dirtyMetrics = useRef(false);
 
   useEffect(() => {
     // Snapshot inicial (estado antes del primer evento).
     fetchJson<{ quotes?: Quote[] }>(`${API_BASE}/api/v1/quotes`)
       .then((d) => {
         for (const q of Array.isArray(d.quotes) ? d.quotes : []) quotesBuf.current[q.exchange] = q;
-        dirty.current = true;
+        dirtyQuotes.current = true;
       })
       .catch(() => undefined);
     fetchJson<Metrics>(`${API_BASE}/api/v1/metrics`)
-      .then((m) => { metricsBuf.current = m; dirty.current = true; })
+      .then((m) => { metricsBuf.current = m; dirtyMetrics.current = true; })
       .catch(() => undefined);
     // Reconciliación + invariantes: determinista → una sola vez. Las 4 proyecciones
     // (projection/capacity/forward/survival) las dispara pullHeavy() abajo en el mismo mount,
@@ -467,7 +471,7 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       const q = parseEvent<Quote>(e);
       if (!q) return;
       quotesBuf.current[q.exchange] = q;
-      dirty.current = true;
+      dirtyQuotes.current = true;
     });
 
     es.addEventListener('opportunity', (e) => {
@@ -510,14 +514,14 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       s.lastLatencyMs = o.latency_ms;
       s.lastOpportunityId = o.id;
       routeStatsRef.current.set(key, s);
-      dirty.current = true;
+      dirtyOpps.current = true;
     });
 
     es.addEventListener('metrics', (e) => {
       const m = parseEvent<Metrics>(e);
       if (!m) return;
       metricsBuf.current = m;
-      dirty.current = true;
+      dirtyMetrics.current = true;
     });
 
     // P&L en tiempo real (push tras cada ejecución, throttled). Antes era polling /pnl cada 2s.
@@ -540,12 +544,20 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
 
     let raf = 0;
     const tick = () => {
-      if (dirty.current) {
-        dirty.current = false;
+      // Vuelca SÓLO la slice que cambió: evita re-render de opps/routeStats (clon del Map) y
+      // metrics cuando sólo llegaron quotes, y viceversa.
+      if (dirtyQuotes.current) {
+        dirtyQuotes.current = false;
         setQuotes({ ...quotesBuf.current });
+      }
+      if (dirtyOpps.current) {
+        dirtyOpps.current = false;
         setOpportunities([...oppsBuf.current]);
         setDetectedCount(detectedRef.current);
         setRouteStats(Array.from(routeStatsRef.current.values()).map((s) => ({ ...s })));
+      }
+      if (dirtyMetrics.current) {
+        dirtyMetrics.current = false;
         if (metricsBuf.current) setMetrics(metricsBuf.current);
       }
       raf = requestAnimationFrame(tick);
