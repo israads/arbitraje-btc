@@ -46,6 +46,7 @@ function FunnelPanelImpl({ metrics }: { metrics: Metrics | null }) {
       <SectionHeader
         title="Embudo de decisiones"
         subtitle="detectadas → viables → ejecutables → capturadas"
+        help="El viaje de cada oportunidad: cuántas se detectan, cuántas sobreviven a fees (viables), a latencia/liquidez (ejecutables) y cuántas se capturan. La caída entre etapas muestra exactamente dónde y por qué mueren los spreads."
         icon={<IconFilter size={18} />}
         right={
           <Group gap="xs">

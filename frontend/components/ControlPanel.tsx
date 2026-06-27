@@ -81,6 +81,7 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
       <SectionHeader
         title="Control"
         icon={<IconShieldHalf size={18} />}
+        help="Controles del operador. Kill switch = freno de emergencia (detiene toda ejecución al instante). Resume = reanuda tras un kill switch o un breaker. Fallback de demo: Auto/Replay/Jury/Off (Jury reproduce 7 escenarios y avanza solo). Circuit breakers: pausas automáticas por datos viejos, volatilidad, inventario o drawdown."
         right={
           <Badge color={breakers.halted ? 'red' : 'brand'} variant={breakers.halted ? 'filled' : 'light'}>
             {breakers.halted ? 'HALTED' : 'OPERANDO'}

@@ -2,6 +2,7 @@
 
 import { Box, Card, Group, Text, ThemeIcon, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
+import { InfoHint } from './InfoHint';
 
 /** Color de la marca para acentos puntuales fuera del sistema de Mantine. */
 export const BRAND = '#16d67f';
@@ -54,11 +55,13 @@ export function SectionHeader({
   icon,
   right,
   subtitle,
+  help,
 }: {
   title: string;
   icon?: ReactNode;
   right?: ReactNode;
   subtitle?: string;
+  help?: string;
 }) {
   return (
     <Group justify="space-between" align="flex-start" mb="md" wrap="nowrap">
@@ -75,9 +78,12 @@ export function SectionHeader({
           </ThemeIcon>
         )}
         <Box>
-          <Title order={4} fz="md" lh={1.2}>
-            {title}
-          </Title>
+          <Group gap={4} wrap="nowrap">
+            <Title order={4} fz="md" lh={1.2}>
+              {title}
+            </Title>
+            {help && <InfoHint title={title} body={help} />}
+          </Group>
           {subtitle && (
             <Text size="xs" c="dimmed" mt={2}>
               {subtitle}
@@ -101,6 +107,7 @@ export function StatCard({
   icon,
   sub,
   emphasize = false,
+  hint,
 }: {
   label: string;
   value: string;
@@ -108,6 +115,7 @@ export function StatCard({
   icon?: ReactNode;
   sub?: ReactNode;
   emphasize?: boolean;
+  hint?: string;
 }) {
   const accentColor =
     accent === 'pos' ? POS : accent === 'neg' ? NEG : accent === 'brand' ? BRAND : '#5C6982';
@@ -137,9 +145,12 @@ export function StatCard({
         }}
       />
       <Group justify="space-between" align="center" gap="xs" mb={8}>
-        <Text size="xs" tt="uppercase" fw={600} c="dimmed" style={{ letterSpacing: 0, fontSize: 10.5 }}>
-          {label}
-        </Text>
+        <Group gap={2} wrap="nowrap">
+          <Text size="xs" tt="uppercase" fw={600} c="dimmed" style={{ letterSpacing: 0, fontSize: 10.5 }}>
+            {label}
+          </Text>
+          {hint && <InfoHint title={label} body={hint} size={12} />}
+        </Group>
         {icon && (
           <Box c={accent === 'neutral' ? 'dimmed' : accentColor} style={{ display: 'flex' }}>
             {icon}

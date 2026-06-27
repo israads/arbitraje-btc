@@ -8,6 +8,7 @@ import {
   IconArrowDownRight,
   IconArrowUpRight,
   IconChartHistogram,
+  IconHelp,
   IconRoute,
   IconWallet,
 } from '@tabler/icons-react';
@@ -30,6 +31,7 @@ import { StoragePanel } from '../components/StoragePanel';
 import { ProbabilityLattice } from '../components/ProbabilityLattice';
 import { RelationshipGraph } from '../components/RelationshipGraph';
 import { GuidedTour, TOUR_STEPS } from '../components/GuidedTour';
+import { GuideDrawer } from '../components/GuideDrawer';
 import { StatCard, AQUA } from '../components/primitives';
 
 function statusColor(s: ConnStatus): string {
@@ -197,6 +199,7 @@ export default function DashboardPage() {
   const total = pnl?.total_pnl ?? 0;
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
   const [tourOpen, setTourOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   return (
     <AppShell header={{ height: 64 }} padding={{ base: 'sm', sm: 'lg' }}>
@@ -211,6 +214,15 @@ export default function DashboardPage() {
           <BrandMark />
           <HeaderStats quotes={quotes} detected={detectedCount} />
           <Group gap="xs" wrap="nowrap">
+            <Button
+              size="compact-sm"
+              variant="subtle"
+              color="gray"
+              leftSection={<IconHelp size={15} />}
+              onClick={() => setGuideOpen(true)}
+            >
+              Guía
+            </Button>
             <Button
               size="compact-sm"
               variant="light"
@@ -256,6 +268,7 @@ export default function DashboardPage() {
               emphasize
               icon={total < 0 ? <IconArrowDownRight size={18} /> : <IconArrowUpRight size={18} />}
               sub="realized + unrealized"
+              hint="Ganancia o pérdida total de la sesión: lo ya cerrado (realized) más lo abierto valorado a mercado (unrealized). Verde = ganas, rojo = pierdes."
             />
             <StatCard
               label="Realized"
@@ -263,6 +276,7 @@ export default function DashboardPage() {
               accent={(pnl?.realized_pnl ?? 0) < 0 ? 'neg' : 'neutral'}
               icon={<IconActivity size={18} />}
               sub="capturado y cerrado"
+              hint="P&L de operaciones ya completadas y cerradas. Es ganancia/pérdida realizada, no estimada."
             />
             <StatCard
               label="Unrealized"
@@ -270,6 +284,7 @@ export default function DashboardPage() {
               accent={(pnl?.unrealized_pnl ?? 0) < 0 ? 'neg' : 'neutral'}
               icon={<IconChartHistogram size={18} />}
               sub="mark-to-market abierto"
+              hint="Ganancia/pérdida de posiciones aún abiertas, valoradas al precio actual de mercado. Cambia con el precio hasta que se cierran."
             />
             <StatCard
               label="Equity"
@@ -277,6 +292,7 @@ export default function DashboardPage() {
               accent="brand"
               icon={<IconWallet size={18} />}
               sub="capital simulado total"
+              hint="Capital total simulado: efectivo + valor de BTC en todos los venues. Es el tamaño de la cuenta del bot."
             />
           </SimpleGrid>
 
@@ -379,6 +395,7 @@ export default function DashboardPage() {
         onClose={() => setSelectedOpportunityId(null)}
       />
       {tourOpen && <GuidedTour steps={TOUR_STEPS} onClose={() => setTourOpen(false)} />}
+      <GuideDrawer opened={guideOpen} onClose={() => setGuideOpen(false)} />
     </AppShell>
   );
 }

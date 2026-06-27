@@ -46,6 +46,7 @@ export function ForwardFanChart({ forward }: { forward: ForwardProjection | null
     <SectionHeader
       title="Proyección forward de P&L"
       subtitle="Monte Carlo honesto · dispersión, no pronóstico"
+      help="Simula miles de futuros posibles remuestreando la serie real de P&L de la sesión. Las bandas (P5–P95) muestran el rango probable; no es una predicción, es la dispersión consistente con los datos. Incluye prob. de ganancia, de ruina y Sharpe/PSR (si el rendimiento es real o suerte)."
       icon={<IconChartLine size={18} />}
       right={
         forward?.available ? (

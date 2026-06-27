@@ -283,6 +283,7 @@ export function ProbabilityLattice({ forward }: { forward: ForwardProjection | n
         title="Probability Lattice"
         subtitle="cada trade = una bola · el edge inclina el tablero"
         icon={<IconGridDots size={18} />}
+        help="Un tablero de Galton sobre la simulación Monte Carlo: cada bola es un trade posible muestreado de la distribución real de P&L. Al caer reconstruye esa distribución — verde si queda ganancia, rojo si pierde. Si el motor tiene ventaja, la masa cae al verde."
         right={
           <Group gap="xs">
             {forward?.n_paths ? (

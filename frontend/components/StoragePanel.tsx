@@ -125,6 +125,7 @@ export function StoragePanel() {
       <SectionHeader
         title="Almacenamiento"
         subtitle="base de datos · política de retención"
+        help="Cuánto ocupa la base de datos y cuánto histórico conservar. El sistema mide la tasa real de inserción y estima el tamaño en cada ventana (1/6/12/18/24h). Elige una y pulsa 'Aplicar y podar' para acotar el crecimiento."
         icon={<IconDatabase size={18} />}
         right={
           stats ? (

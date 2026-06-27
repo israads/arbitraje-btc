@@ -102,6 +102,16 @@ class SnapshotRow(Base):
     balances_json = Column(Text, nullable=True)   # JSON de la lista de balances
 
 
+class AppConfigRow(Base):
+    """Configuración base persistida (key-value JSON). Sobrevive reinicios y se aplica a
+    `Settings` al arrancar, antes de crear el motor/portfolio."""
+
+    __tablename__ = "app_config"
+
+    key = Column(String, primary_key=True)
+    value_json = Column(Text, nullable=False)
+
+
 # ---------------------------------------------------------------------------
 # Factory de engine y sesión
 # ---------------------------------------------------------------------------

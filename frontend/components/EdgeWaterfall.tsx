@@ -32,6 +32,7 @@ export function EdgeWaterfall({ report }: { report: ValidationReport | null }) {
         <SectionHeader
           title="Edge Waterfall"
           subtitle="reconciliación del reto · prueba de correctitud"
+          help="La 'prueba de correctitud': descompone el ejemplo oficial del reto en cascada — bruto, menos fees, menos rebalanceo = neto ($109.75/BTC) — y verifica que nuestra aritmética coincide con la referencia. Las insignias de abajo son invariantes económicas que deben cumplirse siempre."
           icon={<IconRosetteDiscountCheck size={18} />}
         />
         <Text size="sm" c="dimmed">

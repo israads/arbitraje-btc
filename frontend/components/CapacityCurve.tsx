@@ -26,6 +26,7 @@ export function CapacityCurve({ capacity }: { capacity: EdgeCapacity | null }) {
     <SectionHeader
       title="Capacity Curve"
       subtitle="edge total $ vs capital desplegado · ¿cuánto absorbe?"
+      help="Cuánto capital puede absorber la oportunidad antes de que tu propio volumen mate el edge: comprar/vender en cantidad mueve el precio. La curva se aplana y luego cae; el punto óptimo (Q*) es donde la ganancia total es máxima."
       icon={<IconChartArea size={18} />}
       right={
         capacity ? (

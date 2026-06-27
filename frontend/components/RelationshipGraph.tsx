@@ -241,6 +241,7 @@ export function RelationshipGraph({ routeStats }: { routeStats: RouteStat[] }) {
         title="Relationship Graph"
         subtitle="rutas de arbitraje · venues y su edge neto"
         icon={<IconShare3 size={18} />}
+        help="Cada nodo es un exchange y cada línea una ruta compra→venta observada. Verde = el edge neto sobrevive a los costes; rojo = no; gris = aún sin neto. El grosor refleja cuántas veces se detectó esa ruta. El punto que viaja marca la mejor ruta."
         right={
           <Group gap="xs">
             <Badge variant="light" color="aqua">

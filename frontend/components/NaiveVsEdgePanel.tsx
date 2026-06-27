@@ -97,6 +97,7 @@ export function NaiveVsEdgePanel({ report }: { report: NaiveVsEdgeReport | null 
         title="Naive vs Edge"
         subtitle="lo que parece vs lo que queda · sesión"
         icon={<IconScale size={18} />}
+        help="Contrasta lo que un detector ingenuo de spreads contaría como ganancia bruta vs el neto que el motor realmente captura tras fees, latencia y peg. Abajo se atribuye la fuga: por qué se descartó cada oportunidad. La tesis del proyecto en un panel."
         right={
           survivalPct != null ? (
             <Tooltip
