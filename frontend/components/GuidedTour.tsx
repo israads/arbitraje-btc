@@ -16,36 +16,43 @@ export interface TourStep {
   id: string;
   title: string;
   body: string;
+  tab?: string;
 }
 
 export const TOUR_STEPS: TourStep[] = [
   {
     id: 'tour-edge-waterfall',
+    tab: 'correctitud',
     title: '1 · Prueba de correctitud',
     body: 'Reconciliamos el ejemplo del reto ($109.75/BTC) e invariantes económicas. La aritmética no está maquillada.',
   },
   {
     id: 'tour-naive-edge',
+    tab: 'resumen',
     title: '2 · Ingenuo vs motor',
     body: 'Un detector de spreads contaría ganancias brutas; el motor descuenta fees, latencia y peg. La mayoría no sobrevive — y mostramos por qué.',
   },
   {
     id: 'tour-frontier',
+    tab: 'proyeccion',
     title: '3 · Dónde sobrevive el edge',
     body: 'Break-even frontier por tamaño y fee tier: a fee retail casi todo es rojo; a fee institucional aparece el sweet spot.',
   },
   {
     id: 'tour-lattice',
+    tab: 'proyeccion',
     title: '4 · El edge inclina el tablero',
     body: 'Cada trade es una bola del Monte Carlo forward; la masa cae al verde solo si hay ventaja real tras costes.',
   },
   {
     id: 'tour-forward',
+    tab: 'proyeccion',
     title: '5 · Honestidad estadística',
     body: 'Forward Monte Carlo (bootstrap estacionario) con P5–P95, prob. de ruina y Deflated Sharpe. No es un pronóstico: es la dispersión consistente con la muestra.',
   },
   {
     id: 'tour-config',
+    tab: 'operacion',
     title: '6 · Operación auditable',
     body: 'Retención de la base de datos con estimación de almacenamiento y parámetros what-if que no mutan el motor vivo.',
   },
@@ -58,7 +65,15 @@ interface Rect {
   height: number;
 }
 
-export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () => void }) {
+export function GuidedTour({
+  steps,
+  onClose,
+  onNavigate,
+}: {
+  steps: TourStep[];
+  onClose: () => void;
+  onNavigate?: (tab: string) => void;
+}) {
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
 
@@ -75,18 +90,26 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
     setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
   }, [step.id]);
 
-  // Al cambiar de paso: scroll al elemento y medir una vez (no en cada scroll del usuario).
+  // Al cambiar de paso: activa la pestaña que contiene el elemento, espera a que monte, luego
+  // hace scroll y mide. (Las secciones viven en tabs distintas; sin esto el spotlight no halla
+  // el elemento de otra pestaña.)
   useEffect(() => {
-    const el = document.getElementById(step.id);
-    if (!el) {
-      setRect(null);
-      return;
-    }
+    if (step.tab) onNavigate?.(step.tab);
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
-    const t = window.setTimeout(reposition, reduce ? 0 : 320);
-    return () => window.clearTimeout(t);
-  }, [step.id, reposition]);
+    const timers: number[] = [];
+    timers.push(
+      window.setTimeout(() => {
+        const el = document.getElementById(step.id);
+        if (!el) {
+          setRect(null);
+          return;
+        }
+        el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+        timers.push(window.setTimeout(reposition, reduce ? 0 : 300));
+      }, step.tab ? 90 : 0),
+    );
+    return () => timers.forEach(window.clearTimeout);
+  }, [step.id, step.tab, onNavigate, reposition]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

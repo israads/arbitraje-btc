@@ -2,13 +2,16 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { AppShell, Badge, Box, Button, Divider, Grid, Group, SimpleGrid, Stack, Text } from '@mantine/core';
+import { AppShell, Badge, Box, Button, Divider, Grid, Group, SimpleGrid, Stack, Tabs, Text } from '@mantine/core';
 import {
   IconActivity,
+  IconAdjustments,
   IconArrowDownRight,
   IconArrowUpRight,
   IconChartHistogram,
   IconHelp,
+  IconLayoutDashboard,
+  IconRosetteDiscountCheck,
   IconRoute,
   IconWallet,
 } from '@tabler/icons-react';
@@ -201,6 +204,7 @@ export default function DashboardPage() {
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
   const [tourOpen, setTourOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [tab, setTab] = useState<string>('resumen');
 
   return (
     <AppShell header={{ height: 64 }} padding={{ base: 'sm', sm: 'lg' }}>
@@ -297,99 +301,113 @@ export default function DashboardPage() {
             />
           </SimpleGrid>
 
-          {/* HERO: Edge Waterfall (prueba de correctitud) + Control del operador */}
-          <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 7 }} id="tour-edge-waterfall">
-              <EdgeWaterfall report={validation} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 5 }}>
-              <ControlPanel breakers={breakers} demo={demo} />
-            </Grid.Col>
-          </Grid>
+          {/* Dashboard agrupado en pestañas: menos scroll, narrativa clara */}
+          <Tabs value={tab} onChange={(v) => setTab(v || 'resumen')} radius="md" keepMounted={false}>
+            <Tabs.List mb="lg">
+              <Tabs.Tab value="resumen" leftSection={<IconLayoutDashboard size={15} />}>
+                Resumen
+              </Tabs.Tab>
+              <Tabs.Tab value="correctitud" leftSection={<IconRosetteDiscountCheck size={15} />}>
+                Correctitud
+              </Tabs.Tab>
+              <Tabs.Tab value="proyeccion" leftSection={<IconChartHistogram size={15} />}>
+                Proyección
+              </Tabs.Tab>
+              <Tabs.Tab value="operacion" leftSection={<IconAdjustments size={15} />}>
+                Operación
+              </Tabs.Tab>
+            </Tabs.List>
 
-          {/* Precios por exchange (ancho completo: 8 venues) */}
-          <PricesTable quotes={quotes} />
+            {/* RESUMEN: la tesis de un vistazo */}
+            <Tabs.Panel value="resumen">
+              <Stack gap="lg">
+                <Grid gutter="lg" align="stretch">
+                  <Grid.Col span={{ base: 12, md: 4 }} id="tour-naive-edge">
+                    <NaiveVsEdgePanel report={naiveVsEdge} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, md: 4 }}>
+                    <LiveLineChart
+                      title="Spread bruto cross-venue"
+                      value={spread}
+                      color={AQUA}
+                      suffix=" $"
+                      zeroLine
+                      hint="best bid − best ask normalizados; >0 = cruce aparente (antes de fees)"
+                    />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, md: 4 }}>
+                    <LiveLineChart
+                      title="P&L total"
+                      value={pnl?.total_pnl ?? null}
+                      baseline
+                      suffix=" $"
+                      zeroLine
+                      hint="verde sobre 0 / rojo bajo 0 · plano-negativo tras costes ES el punto"
+                    />
+                  </Grid.Col>
+                </Grid>
+                <WinsPanel report={wins} />
+              </Stack>
+            </Tabs.Panel>
 
-          {/* Tesis bruto-vs-neto: agregado de sesión (naive vs edge) + series en vivo */}
-          <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 4 }} id="tour-naive-edge">
-              <NaiveVsEdgePanel report={naiveVsEdge} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 4 }}>
-              <LiveLineChart
-                title="Spread bruto cross-venue"
-                value={spread}
-                color={AQUA}
-                suffix=" $"
-                zeroLine
-                hint="best bid − best ask normalizados; >0 = cruce aparente (antes de fees)"
-              />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 4 }}>
-              <LiveLineChart
-                title="P&L total"
-                value={pnl?.total_pnl ?? null}
-                baseline
-                suffix=" $"
-                zeroLine
-                hint="verde sobre 0 / rojo bajo 0 · plano-negativo tras costes ES el punto"
-              />
-            </Grid.Col>
-          </Grid>
+            {/* CORRECTITUD: la prueba de que la aritmética es real */}
+            <Tabs.Panel value="correctitud">
+              <Stack gap="lg">
+                <Box id="tour-edge-waterfall">
+                  <EdgeWaterfall report={validation} />
+                </Box>
+                <PricesTable quotes={quotes} />
+                <FunnelPanel metrics={metrics} />
+              </Stack>
+            </Tabs.Panel>
 
-          {/* Evidencia de ganancias: spreads capturados rentables (registro persistente) */}
-          <WinsPanel report={wins} />
+            {/* PROYECCIÓN: las 3 capas + el tablero */}
+            <Tabs.Panel value="proyeccion">
+              <Stack gap="lg">
+                <Grid gutter="lg" align="stretch">
+                  <Grid.Col span={{ base: 12, md: 7 }} id="tour-frontier">
+                    <BreakEvenFrontier frontier={projection} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, md: 5 }}>
+                    <LifetimeHistogram metrics={metrics} />
+                  </Grid.Col>
+                </Grid>
+                <Grid gutter="lg" align="stretch">
+                  <Grid.Col span={{ base: 12, md: 5 }}>
+                    <CapacityCurve capacity={capacity} />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, md: 7 }} id="tour-forward">
+                    <ForwardFanChart forward={forward} />
+                  </Grid.Col>
+                </Grid>
+                <Box id="tour-lattice">
+                  <ProbabilityLattice forward={forward} />
+                </Box>
+                <SurvivalCalibrationPanel report={survival} />
+              </Stack>
+            </Tabs.Panel>
 
-          {/* PROJECTION SUITE — Capa 1: Break-even Frontier (dónde sobrevive el edge) +
-              Lifetime (¿somos suficientemente rápidos?). */}
-          <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 7 }} id="tour-frontier">
-              <BreakEvenFrontier frontier={projection} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 5 }}>
-              <LifetimeHistogram metrics={metrics} />
-            </Grid.Col>
-          </Grid>
-
-          {/* PROJECTION SUITE — Capa 2: Capacity (¿cuánto capital absorbe?) + Capa 3: Forward
-              de P&L (¿qué esperar, con qué incertidumbre? — honestidad estadística). */}
-          <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 5 }}>
-              <CapacityCurve capacity={capacity} />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 7 }} id="tour-forward">
-              <ForwardFanChart forward={forward} />
-            </Grid.Col>
-          </Grid>
-
-          {/* Probability Lattice: el Monte Carlo forward como tablero de Galton animado */}
-          <Box id="tour-lattice">
-            <ProbabilityLattice forward={forward} />
-          </Box>
-
-          <SurvivalCalibrationPanel report={survival} />
-
-          {/* Configuración: almacenamiento + retención de la base de datos */}
-          <Grid gutter="lg" align="stretch">
-            <Grid.Col span={{ base: 12, md: 7 }} id="tour-config">
-              <StoragePanel />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 5 }}>
-              <StrategyLabPanel params={strategyParams} onApply={setStrategyParams} />
-            </Grid.Col>
-          </Grid>
-
-          {/* Grafo de rutas de arbitraje (venues × edge neto) */}
-          <RelationshipGraph routeStats={routeStats} />
-
-          {/* Embudo de decisiones */}
-          <FunnelPanel metrics={metrics} />
-
-          <OpportunitiesTable
-            routeStats={routeStats}
-            detectedCount={detectedCount}
-            onExplain={setSelectedOpportunityId}
-          />
+            {/* OPERACIÓN: control, configuración y rutas */}
+            <Tabs.Panel value="operacion">
+              <Stack gap="lg">
+                <ControlPanel breakers={breakers} demo={demo} />
+                <Grid gutter="lg" align="stretch">
+                  <Grid.Col span={{ base: 12, md: 7 }} id="tour-config">
+                    <StoragePanel />
+                  </Grid.Col>
+                  <Grid.Col span={{ base: 12, md: 5 }}>
+                    <StrategyLabPanel params={strategyParams} onApply={setStrategyParams} />
+                  </Grid.Col>
+                </Grid>
+                <RelationshipGraph routeStats={routeStats} />
+                <OpportunitiesTable
+                  routeStats={routeStats}
+                  detectedCount={detectedCount}
+                  onExplain={setSelectedOpportunityId}
+                />
+              </Stack>
+            </Tabs.Panel>
+          </Tabs>
         </Stack>
       </AppShell.Main>
       <OpportunityExplainDrawer
@@ -398,7 +416,9 @@ export default function DashboardPage() {
         opened={selectedOpportunityId != null}
         onClose={() => setSelectedOpportunityId(null)}
       />
-      {tourOpen && <GuidedTour steps={TOUR_STEPS} onClose={() => setTourOpen(false)} />}
+      {tourOpen && (
+        <GuidedTour steps={TOUR_STEPS} onClose={() => setTourOpen(false)} onNavigate={setTab} />
+      )}
       <GuideDrawer opened={guideOpen} onClose={() => setGuideOpen(false)} />
     </AppShell>
   );
