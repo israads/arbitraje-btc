@@ -64,7 +64,7 @@ def require_control_token(
     pasa siempre; si está set, exige el header `X-Control-Token` exacto. Lee el token del
     `ctx.settings` inyectado en el lifespan (respeta los settings de tests)."""
     ctx = request.app.state.ctx
-    expected = getattr(getattr(ctx, "settings", None), "control_token", "") or ""
+    expected = ctx.settings.control_token or ""
     if expected and x_control_token != expected:
         raise HTTPException(status_code=401, detail="invalid or missing X-Control-Token")
 
@@ -83,11 +83,11 @@ def _live_projection_books(ctx: Any) -> dict[str, Any] | None:
     `ctx.detector.books` y el snapshot normalizado inicial en `ctx.latest_norm`. Usar ambos
     evita que `mode=live` caiga a demo mientras sí hay datos vivos.
     """
-    detector = getattr(ctx, "detector", None)
+    detector = ctx.detector
     detector_books = getattr(detector, "books", None)
     if detector_books:
         return cast(dict[str, Any], detector_books)
-    latest_norm = getattr(ctx, "latest_norm", None)
+    latest_norm = ctx.latest_norm
     if latest_norm:
         return cast(dict[str, Any], latest_norm)
     return None
@@ -142,7 +142,7 @@ def _runtime_params_snapshot(ctx: Any) -> dict[str, Any]:
     what-if/proyecciones y se exportan para auditoria, pero no cambian ejecucion real.
     """
     settings = ctx.settings
-    overrides_model = getattr(ctx, "runtime_params", RuntimeParamOverrides())
+    overrides_model = ctx.runtime_params
     overrides = overrides_model.model_dump(
         mode="json",
         exclude_none=True,
@@ -179,7 +179,7 @@ def _runtime_params_snapshot(ctx: Any) -> dict[str, Any]:
         for key, cfg in settings.exchanges.items()
     }
     return {
-        "revision": getattr(ctx, "runtime_revision", 0),
+        "revision": ctx.runtime_revision,
         "scope": "what_if_and_projection_only",
         "base": base,
         "overrides": overrides,
@@ -197,7 +197,7 @@ def _runtime_params_snapshot(ctx: Any) -> dict[str, Any]:
 
 
 def _runtime_value(ctx: Any, key: str) -> Any:
-    overrides = getattr(ctx, "runtime_params", None)
+    overrides = ctx.runtime_params
     value = getattr(overrides, key, None) if overrides is not None else None
     if value is not None:
         return value
@@ -213,7 +213,7 @@ def _export_opportunity(opp: Any) -> dict[str, Any]:
 
 
 def _metrics_snapshot(ctx: Any) -> dict[str, Any]:
-    collector = getattr(ctx, "metrics", None)
+    collector = ctx.metrics
     if collector is None:
         funnel = ctx.opp_counts
         snap = MetricsSnapshot(
@@ -226,30 +226,30 @@ def _metrics_snapshot(ctx: Any) -> dict[str, Any]:
         ).model_dump(mode="json")
     else:
         snap = cast(dict[str, Any], collector.snapshot(ctx.opp_counts).model_dump(mode="json"))
-    integrity = getattr(ctx, "integrity", None)
+    integrity = ctx.integrity
     if integrity is not None:
         snap["integrity"] = integrity.reports()
     return snap
 
 
 def _record_preflight_metric(ctx: Any, venue: str, result: str) -> None:
-    collector = getattr(ctx, "metrics", None)
+    collector = ctx.metrics
     if collector is not None:
         collector.record_preflight(venue, result)
 
 
 def _record_test_order_metric(ctx: Any, venue: str, result: str) -> None:
-    collector = getattr(ctx, "metrics", None)
+    collector = ctx.metrics
     if collector is not None:
         collector.record_test_order(venue, result)
 
 
 def _strategy_books(ctx: Any) -> dict[str, Any]:
-    detector = getattr(ctx, "detector", None)
+    detector = ctx.detector
     detector_books = getattr(detector, "books", None)
     if detector_books:
         return cast(dict[str, Any], detector_books)
-    latest_norm = getattr(ctx, "latest_norm", None)
+    latest_norm = ctx.latest_norm
     if latest_norm:
         return cast(dict[str, Any], latest_norm)
     return {}
@@ -292,7 +292,7 @@ def _strategy_infos(ctx: Any) -> list[StrategyInfo]:
 
 
 def _book_reference_price(ctx: Any, venue: str, side: str) -> float | None:
-    book = getattr(ctx, "latest_norm", {}).get(venue)
+    book = ctx.latest_norm.get(venue)
     if book is None:
         return None
     price = book.best_ask if side == "buy" else book.best_bid
@@ -305,7 +305,7 @@ def _enrich_execution_request(ctx: Any, req: PreflightRequest) -> PreflightReque
     El adapter sigue siendo puro: la API es la que conoce el estado vivo de la app.
     """
     updates: dict[str, Any] = {}
-    opp = getattr(ctx, "opps_by_id", {}).get(req.opportunity_id) if req.opportunity_id else None
+    opp = ctx.opps_by_id.get(req.opportunity_id) if req.opportunity_id else None
     if opp is not None:
         if not req.symbol:
             updates["symbol"] = opp.symbol
@@ -389,14 +389,14 @@ async def params_patch(request: Request, body: RuntimeParamOverrides) -> dict[st
     cambiar umbrales operativos por un movimiento de UI.
     """
     ctx = request.app.state.ctx
-    current = getattr(ctx, "runtime_params", RuntimeParamOverrides())
+    current = ctx.runtime_params
     incoming = body.model_dump(exclude_unset=True)
     if "enabled_exchange_overrides" in incoming:
         merged_ex = dict(current.enabled_exchange_overrides)
         merged_ex.update(cast(dict[str, bool], incoming["enabled_exchange_overrides"]))
         incoming["enabled_exchange_overrides"] = merged_ex
     ctx.runtime_params = current.model_copy(update=incoming)
-    ctx.runtime_revision = getattr(ctx, "runtime_revision", 0) + 1
+    ctx.runtime_revision = ctx.runtime_revision + 1
     _PROJECTION_CACHE.clear()
     return _runtime_params_snapshot(ctx)
 
@@ -406,7 +406,7 @@ async def params_reset(request: Request) -> dict[str, Any]:
     """Limpia overrides de Strategy Lab."""
     ctx = request.app.state.ctx
     ctx.runtime_params = RuntimeParamOverrides()
-    ctx.runtime_revision = getattr(ctx, "runtime_revision", 0) + 1
+    ctx.runtime_revision = ctx.runtime_revision + 1
     _PROJECTION_CACHE.clear()
     return _runtime_params_snapshot(ctx)
 
@@ -420,7 +420,7 @@ async def info(request: Request) -> dict[str, Any]:
     """
     ctx = request.app.state.ctx
     settings = ctx.settings
-    demo = ctx.demo.status() if getattr(ctx, "demo", None) else {}
+    demo = ctx.demo.status() if ctx.demo else {}
     return {
         "service": "arbitraje-btc",
         "version": "0.1.0",
@@ -448,10 +448,10 @@ async def storage(request: Request) -> dict[str, Any]:
     from ...store.retention import measure_storage
 
     ctx = request.app.state.ctx
-    engine = getattr(ctx, "db_engine", None)
+    engine = ctx.db_engine
     if engine is None:
         raise HTTPException(status_code=503, detail="db not initialized")
-    hours = getattr(ctx, "db_retention_hours", ctx.settings.db_retention_hours)
+    hours = ctx.db_retention_hours
     stats = await measure_storage(engine, ctx.settings.db_url, hours)
     return stats.to_dict()
 
@@ -466,7 +466,7 @@ async def storage_retention(request: Request, body: RetentionRequest) -> dict[st
     from ...store.retention import measure_storage, prune_old_rows
 
     ctx = request.app.state.ctx
-    engine = getattr(ctx, "db_engine", None)
+    engine = ctx.db_engine
     if engine is None:
         raise HTTPException(status_code=503, detail="db not initialized")
     ctx.db_retention_hours = body.retention_hours
@@ -501,7 +501,7 @@ async def opportunity_explain(request: Request, opportunity_id: str) -> dict[str
     desde el buffer en memoria.
     """
     ctx = request.app.state.ctx
-    opp = getattr(ctx, "opps_by_id", {}).get(opportunity_id)
+    opp = ctx.opps_by_id.get(opportunity_id)
     if opp is None:
         raise HTTPException(status_code=404, detail="opportunity not found")
     if opp.explanation is None:
@@ -524,7 +524,7 @@ async def opportunity_what_if(
     from ...engine.explain import build_opportunity_explanation
 
     ctx = request.app.state.ctx
-    opp = getattr(ctx, "opps_by_id", {}).get(opportunity_id)
+    opp = ctx.opps_by_id.get(opportunity_id)
     if opp is None:
         raise HTTPException(status_code=404, detail="opportunity not found")
     books = _strategy_books(ctx)
@@ -533,7 +533,7 @@ async def opportunity_what_if(
     if buy_book is None or sell_book is None:
         raise HTTPException(status_code=409, detail="route books unavailable")
 
-    runtime_size = getattr(getattr(ctx, "runtime_params", None), "default_trade_qty_btc", None)
+    runtime_size = ctx.runtime_params.default_trade_qty_btc
     q_requested = (
         body.size_btc
         if body.size_btc is not None
@@ -546,7 +546,7 @@ async def opportunity_what_if(
     if q_requested <= 0.0 or not math.isfinite(q_requested):
         raise HTTPException(status_code=422, detail="size_btc must be finite and positive")
 
-    runtime_fee_bps = getattr(getattr(ctx, "runtime_params", None), "fee_bps", None)
+    runtime_fee_bps = ctx.runtime_params.fee_bps
 
     def _fee(venue: str, explicit_bps: float | None) -> float:
         bps = explicit_bps if explicit_bps is not None else body.fee_bps
@@ -673,7 +673,7 @@ async def executions(
     writer no está inicializado devuelve lista vacía.
     """
     ctx = request.app.state.ctx
-    writer = getattr(ctx, "writer", None)
+    writer = ctx.writer
     if writer is None:
         return {"executions": [], "count": 0}
     rows = await writer.get_executions(limit=limit)
@@ -693,7 +693,7 @@ async def opportunities_history(
     `limit` acotado a [1, 1000] (evita LIMIT -1 / DoS).
     """
     ctx = request.app.state.ctx
-    writer = getattr(ctx, "writer", None)
+    writer = ctx.writer
     if writer is None:
         return {"opportunities": [], "count": 0}
     rows = await writer.get_opportunities(limit=limit, status=status)
@@ -707,7 +707,7 @@ async def balances(request: Request) -> dict[str, Any]:
     Inventario pre-posicionado con doble entrada: el snapshot incluye la equity total
     marcada a mercado contra el libro normalizado actual de cada venue."""
     ctx = request.app.state.ctx
-    pf = getattr(ctx, "portfolio", None)
+    pf = ctx.portfolio
     if pf is None:
         # Autostart deshabilitado (p.ej. tests): cartera no inicializada → vacío honesto.
         return {"balances": [], "equity_by_venue": {}, "skew": {}, "snapshot": None}
@@ -729,7 +729,7 @@ async def pnl(request: Request) -> dict[str, Any]:
     + total, equity y la serie de equity (timeline) para la equity curve del dashboard
     (STORY-023). El P&L plano/levemente negativo tras costes ES el punto (honestidad)."""
     ctx = request.app.state.ctx
-    pf = getattr(ctx, "portfolio", None)
+    pf = ctx.portfolio
     if pf is None:
         return {
             "realized_pnl": 0.0, "unrealized_pnl": 0.0, "total_pnl": 0.0,
@@ -746,7 +746,7 @@ async def control_status(request: Request) -> dict[str, Any]:
     `{halted, active:[...], breakers:[{type, active, reason, since}]}`. Autostart-safe: sin
     manager inicializado devuelve `halted=false` sin breakers."""
     ctx = request.app.state.ctx
-    breakers = getattr(ctx, "breakers", None)
+    breakers = ctx.breakers
     if breakers is None:
         return {"halted": False, "active": [], "breakers": []}
     status: dict[str, Any] = breakers.status()
@@ -836,7 +836,7 @@ async def kill_switch(request: Request) -> dict[str, Any]:
     """Kill switch MANUAL del operador (C8 / STORY-018, FR-012): HALTA toda ejecución hasta
     `/control/resume`. Idempotente. Devuelve el estado resultante de los breakers."""
     ctx = request.app.state.ctx
-    breakers = getattr(ctx, "breakers", None)
+    breakers = ctx.breakers
     if breakers is None:
         return {"halted": False, "active": [], "breakers": []}
     breakers.trip_kill_switch()
@@ -852,10 +852,10 @@ async def resume(request: Request) -> dict[str, Any]:
     y re-ancla el pico de equity al valor actual. Los breakers AUTO (vol/skew/stale) siguen
     su condición: si el riesgo persiste, `halted` seguirá `true`. Idempotente."""
     ctx = request.app.state.ctx
-    breakers = getattr(ctx, "breakers", None)
+    breakers = ctx.breakers
     if breakers is None:
         return {"halted": False, "active": [], "breakers": []}
-    pf = getattr(ctx, "portfolio", None)
+    pf = ctx.portfolio
     equity = pf.equity_total(ctx.latest_norm) if pf is not None else None
     breakers.resume(equity=equity)
     log.warning("RESUME por el operador (equity ancla=%s)", equity)
@@ -868,7 +868,7 @@ def _broadcast_breaker(ctx: Any, breakers: Any) -> None:
     """Empuja el estado de breakers por SSE tras una acción manual, para que el dashboard
     refleje el cambio al instante (el monitor también lo emite al cambiar, pero una acción
     del operador debe verse YA sin esperar al siguiente tick)."""
-    hub = getattr(ctx, "hub", None)
+    hub = ctx.hub
     if hub is not None:
         from ...models.events import StreamEvent
 
@@ -890,7 +890,7 @@ async def backtest(
     from ...backtest import run_backtest
 
     ctx = request.app.state.ctx
-    recorder = getattr(ctx, "recorder", None)
+    recorder = ctx.recorder
     ticks = recorder.ticks() if recorder is not None else []
     result = run_backtest(ticks, ctx.settings, in_sample_frac=in_sample_frac)
     result.ts = _latest_book_ts(ctx.latest_norm)
@@ -904,8 +904,8 @@ async def backtest_status(request: Request) -> dict[str, Any]:
     """Estado de la grabación (C14) + último resultado de replay si existe. Lanzar uno nuevo:
     `POST /backtest`."""
     ctx = request.app.state.ctx
-    recorder = getattr(ctx, "recorder", None)
-    last = getattr(ctx, "last_backtest", None)
+    recorder = ctx.recorder
+    last = ctx.last_backtest
     return {
         "recording": {
             "enabled": recorder.enabled if recorder is not None else False,
@@ -921,7 +921,7 @@ async def demo_status(request: Request) -> dict[str, Any]:
     """Estado del fallback de demo (C16 / STORY-024, FR-018): `{active, mode, source, badge,
     since, n_replay_ticks}`. Autostart-safe: sin controlador devuelve estado vivo neutro."""
     ctx = request.app.state.ctx
-    demo = getattr(ctx, "demo", None)
+    demo = ctx.demo
     if demo is None:
         return {"active": False, "mode": "auto", "source": "live", "badge": None}
     demo_st: dict[str, Any] = demo.status()
@@ -936,7 +936,7 @@ async def demo_set_mode(request: Request, mode: str = Query(...)) -> dict[str, A
     if mode not in ("auto", "on", "off", "jury"):
         raise HTTPException(status_code=422, detail="mode debe ser auto|on|off|jury")
     ctx = request.app.state.ctx
-    demo = getattr(ctx, "demo", None)
+    demo = ctx.demo
     if demo is None:
         return {"active": False, "mode": "auto", "source": "live", "badge": None}
     from ...demo.fallback import Mode as _Mode
@@ -951,7 +951,7 @@ async def demo_set_mode(request: Request, mode: str = Query(...)) -> dict[str, A
 async def demo_scenarios(request: Request) -> dict[str, Any]:
     """Escenarios deterministas disponibles para demo de jurado."""
     ctx = request.app.state.ctx
-    demo = getattr(ctx, "demo", None)
+    demo = ctx.demo
     if demo is not None:
         return {"scenarios": demo.jury_scenarios()}
     from ...demo.scenarios import build_jury_scenarios
@@ -974,7 +974,7 @@ async def demo_scenarios(request: Request) -> dict[str, Any]:
 async def demo_select_scenario(request: Request, name: str) -> dict[str, Any]:
     """Selecciona un escenario especifico y fuerza modo jury."""
     ctx = request.app.state.ctx
-    demo = getattr(ctx, "demo", None)
+    demo = ctx.demo
     if demo is None:
         return {"active": False, "mode": "auto", "source": "live", "badge": None}
     if not demo.select_jury_scenario(name):
@@ -996,9 +996,9 @@ async def session_export(request: Request) -> dict[str, Any]:
 
     ctx = request.app.state.ctx
     settings = ctx.settings
-    demo = getattr(ctx, "demo", None)
-    breakers = getattr(ctx, "breakers", None)
-    recorder = getattr(ctx, "recorder", None)
+    demo = ctx.demo
+    breakers = ctx.breakers
+    recorder = ctx.recorder
     export = SessionExport(
         metadata=SessionMetadata(
             app=settings.app_name,
@@ -1027,10 +1027,10 @@ async def session_export(request: Request) -> dict[str, Any]:
         },
         calibration={
             "mode": settings.calibration_mode,
-            "n_shadow_samples": len(getattr(ctx, "shadow_samples", [])),
+            "n_shadow_samples": len(ctx.shadow_samples),
             "shadow_samples": [
                 sample.model_dump(mode="json")
-                for sample in list(getattr(ctx, "shadow_samples", []))[-500:]
+                for sample in list(ctx.shadow_samples)[-500:]
             ],
         },
         validation=build_validation_report().model_dump(mode="json"),
@@ -1053,7 +1053,7 @@ async def metrics(request: Request) -> dict[str, Any]:
     El embudo (conteos) viene de `ctx.opp_counts` (fuente única); el resto del colector C13.
     Autostart-safe: sin colector devuelve el embudo actual con agregados nulos (honesto)."""
     ctx = request.app.state.ctx
-    collector = getattr(ctx, "metrics", None)
+    collector = ctx.metrics
     if collector is None:
         funnel = ctx.opp_counts
         snap_empty: dict[str, Any] = MetricsSnapshot(
@@ -1064,12 +1064,12 @@ async def metrics(request: Request) -> dict[str, Any]:
             discarded=funnel.get("discarded", 0),
             unwound=funnel.get("unwound", 0),
         ).model_dump(mode="json")
-        integrity = getattr(ctx, "integrity", None)
+        integrity = ctx.integrity
         if integrity is not None:
             snap_empty["integrity"] = integrity.reports()
         return snap_empty
     snap: dict[str, Any] = collector.snapshot(ctx.opp_counts).model_dump(mode="json")
-    integrity = getattr(ctx, "integrity", None)
+    integrity = ctx.integrity
     if integrity is not None:
         snap["integrity"] = integrity.reports()
     return snap
@@ -1168,7 +1168,7 @@ async def strategy_regional_mxn(request: Request) -> dict[str, Any]:
 async def integrity(request: Request) -> dict[str, Any]:
     """Reportes enriquecidos de integridad por venue (PRD-004)."""
     ctx = request.app.state.ctx
-    checker = getattr(ctx, "integrity", None)
+    checker = ctx.integrity
     if checker is None:
         return {}
     return cast(dict[str, Any], checker.reports())
@@ -1217,10 +1217,10 @@ async def calibration_survival(
     from ...calibration import build_survival_report
 
     ctx = request.app.state.ctx
-    recorder = getattr(ctx, "recorder", None)
+    recorder = ctx.recorder
     ticks = recorder.ticks() if recorder is not None else []
     report = build_survival_report(
-        list(getattr(ctx, "shadow_samples", [])),
+        list(ctx.shadow_samples),
         ticks,
         ctx.settings,
         latency_ms=latency_ms,
@@ -1245,7 +1245,7 @@ async def projection(
 
     ctx = request.app.state.ctx
     books = _live_projection_books(ctx) if mode == "live" else None
-    settings = getattr(ctx, "settings", None)
+    settings = ctx.settings
     cache_mode = "live" if mode == "live" and books is not None else "demo"
     result = await _cached_projection(
         f"frontier:{cache_mode}:lat={latency_ms}",
@@ -1267,7 +1267,7 @@ async def capacity(
 
     ctx = request.app.state.ctx
     books = _live_projection_books(ctx) if mode == "live" else None
-    settings = getattr(ctx, "settings", None)
+    settings = ctx.settings
     cache_mode = "live" if mode == "live" and books is not None else "demo"
     fee = fee_bps / 10_000.0 if fee_bps is not None else None
     result = await _cached_projection(
@@ -1314,7 +1314,7 @@ async def forward(
 def _backtest_trade_pnls(ctx: Any) -> list[float]:
     """P&L por trade desde la grabación viva (Recorder): replay point-in-time y diferencias de
     la curva de equity realizada acumulada. Read-only; vacío si no hay grabación/trades."""
-    recorder = getattr(ctx, "recorder", None)
+    recorder = ctx.recorder
     if recorder is None:
         return []
     ticks = recorder.ticks()

@@ -87,9 +87,10 @@ tour guiado, Relationship Graph.
 - ~~`useStream` flag `dirty` único~~ → RESUELTO: flags por slice (dirtyQuotes/Opps/Metrics) +
   `React.memo` en PricesTable/OpportunitiesTable/FunnelPanel. Un tick de quote ya no re-renderiza
   opps/routeStats/metrics.
-- `AppState` es un god-object (~25 campos) y el router accede con `getattr(...,default)` disperso.
-  Mejora: separar servicios del pipeline vs estado de mercado + accesores tipados. Riesgo medio
-  (refactor amplio, no funcional) — pendiente.
+- ~~`getattr(ctx, ...)` disperso en el router~~ → RESUELTO: 55 accesos cambiados a acceso directo
+  tipado (`ctx.X`); todos eran campos declarados de AppState, el `getattr` era ruido y devolvía
+  `Any` (ocultaba tipos a mypy). Queda solo 1 `getattr` dinámico legítimo (`ctx.settings, key`).
+  Separar AppState en dos clases se evaluó y descartó: alto riesgo, valor marginal.
 
 ## Convenciones
 
