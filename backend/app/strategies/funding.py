@@ -1,4 +1,11 @@
-"""Funding/basis read-only (PRD-008)."""
+"""Funding/basis read-only (PRD-008).
+
+ESTADO: estructura sin señal por diseño. `on_book` devuelve SIEMPRE `[]` porque no hay
+feed de funding/perp en el alcance actual (spot only): el endpoint
+`/strategies/funding/opportunities` expone la ESTRUCTURA del playbook (rates + explain)
+para demostrar que la arquitectura extiende a funding sin mezclar su riesgo con el P&L
+spot. Activarla de verdad requiere un ingestor de funding rates (fuera de alcance).
+"""
 from __future__ import annotations
 
 from ..config import Settings

@@ -3,7 +3,7 @@
 import { Badge, Box, Card, Group, SimpleGrid, Text, Tooltip } from '@mantine/core';
 import { IconChartLine } from '@tabler/icons-react';
 import type { ForwardProjection } from '../hooks/useStream';
-import { SectionHeader } from './primitives';
+import { FetchFallback, SectionHeader } from './primitives';
 
 /**
  * Projection Suite v2 — Capa 3: Forward de P&L (Monte Carlo honesto). Fan chart de equity
@@ -41,7 +41,15 @@ function Stat({ label, value, hint, color }: { label: string; value: string; hin
   );
 }
 
-export function ForwardFanChart({ forward }: { forward: ForwardProjection | null }) {
+export function ForwardFanChart({
+  forward,
+  error = false,
+  onRetry,
+}: {
+  forward: ForwardProjection | null;
+  error?: boolean;
+  onRetry?: () => void;
+}) {
   const header = (
     <SectionHeader
       title="Proyección forward de P&L"
@@ -62,10 +70,14 @@ export function ForwardFanChart({ forward }: { forward: ForwardProjection | null
     return (
       <Card h="100%">
         {header}
-        <Text size="sm" c="dimmed">
-          {forward?.notes ??
-            'Sin trades suficientes en la grabación. Deja correr el motor para poblar la muestra de P&L por trade.'}
-        </Text>
+        {!forward ? (
+          <FetchFallback error={error} onRetry={onRetry} loading="Simulando trayectorias…" />
+        ) : (
+          <Text size="sm" c="dimmed">
+            {forward.notes ||
+              'Sin trades suficientes en la grabación. Deja correr el motor para poblar la muestra de P&L por trade.'}
+          </Text>
+        )}
       </Card>
     );
   }
@@ -97,14 +109,20 @@ export function ForwardFanChart({ forward }: { forward: ForwardProjection | null
     <Card h="100%">
       {header}
       <Box style={{ overflowX: 'auto' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 360 }} role="img">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          width="100%"
+          style={{ minWidth: 360 }}
+          role="img"
+          aria-label={`Fan chart de P&L proyectado a ${n} trades sobre ${forward.n_paths.toLocaleString('en-US')} trayectorias: mediana terminal $${num(forward.terminal_p50, 0)}, banda P5 $${num(forward.terminal_p5, 0)} a P95 $${num(forward.terminal_p95, 0)}, probabilidad de ganancia ${pct(forward.prob_profit)}.`}
+        >
           <line x1={PAD.l} y1={y(0)} x2={W - PAD.r} y2={y(0)} stroke="rgba(255,255,255,0.18)" strokeDasharray="3 3" />
           <path d={band(bands.p5, bands.p95)} fill="rgba(47,217,140,0.08)" />
           <path d={band(bands.p25, bands.p75)} fill="rgba(47,217,140,0.16)" />
           <path d={line(bands.p50)} fill="none" stroke={profitColor} strokeWidth={2} />
-          <text x={6} y={PAD.t + 8} fontSize="9" fill="rgba(255,255,255,0.4)">${yMax.toFixed(0)}</text>
-          <text x={6} y={H - PAD.b} fontSize="9" fill="rgba(255,255,255,0.4)">${yMin.toFixed(0)}</text>
-          <text x={W - PAD.r} y={H - 6} fontSize="9" fill="rgba(255,255,255,0.4)" textAnchor="end">
+          <text x={6} y={PAD.t + 8} fontSize="9" fill="rgba(255,255,255,0.62)">${yMax.toFixed(0)}</text>
+          <text x={6} y={H - PAD.b} fontSize="9" fill="rgba(255,255,255,0.62)">${yMin.toFixed(0)}</text>
+          <text x={W - PAD.r} y={H - 6} fontSize="9" fill="rgba(255,255,255,0.62)" textAnchor="end">
             +{n} trades
           </text>
         </svg>

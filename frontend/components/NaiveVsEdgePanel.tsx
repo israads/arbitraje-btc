@@ -168,6 +168,12 @@ export function NaiveVsEdgePanel({ report }: { report: NaiveVsEdgeReport | null 
               position="bottom"
             >
               <Box
+                role="img"
+                aria-label={
+                  netPositive
+                    ? `Erosión bruto a neto: de ${money(report.naive_gross_usd)} brutos aparentes sobreviven ${money(report.engine_net_usd)} netos (${keptPct.toFixed(0)} por ciento).`
+                    : `Erosión bruto a neto: el bruto aparente de ${money(report.naive_gross_usd)} no sobrevive a los costes; neto ${money(report.engine_net_usd)}.`
+                }
                 style={{
                   display: 'flex',
                   height: 12,

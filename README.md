@@ -7,8 +7,8 @@
 <p align="center">
   <a href="#quickstart"><img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white"></a>
   <a href="#frontend"><img alt="Next.js" src="https://img.shields.io/badge/Next.js-14-111111?style=for-the-badge&logo=nextdotjs&logoColor=white"></a>
-  <a href="#calidad"><img alt="Tests" src="https://img.shields.io/badge/tests-484%20passing-16D67F?style=for-the-badge"></a>
-  <a href="#calidad"><img alt="Coverage" src="https://img.shields.io/badge/coverage-92.45%25-16D67F?style=for-the-badge"></a>
+  <a href="#calidad"><img alt="Tests" src="https://img.shields.io/badge/tests-507%20passing-16D67F?style=for-the-badge"></a>
+  <a href="#calidad"><img alt="Coverage" src="https://img.shields.io/badge/coverage-91.03%25-16D67F?style=for-the-badge"></a>
 </p>
 
 <p align="center">
@@ -93,6 +93,14 @@ prioridades fueron:
 La idea central es que un bot ingenuo detecta diferencias de precio; este sistema mide
 **diferencias capturables**.
 
+**Alcance vs. negocio (decisión deliberada).** El core implementado y medido en vivo es
+cross-exchange BTC spot: es donde la metodología se puede demostrar con datos públicos y
+reconciliar al centavo. Los módulos triangular, funding/basis y corredor MXN existen como
+opt-in (endpoints + tests, sin UI dedicada) a propósito: demuestran que la arquitectura
+extiende la misma metodología a otras estructuras **sin mezclar sus riesgos** con el P&L
+spot, no que el negocio esté ya capturado ahí. La tesis comercial completa —fees
+institucionales, corredor MXN, mid-caps líquidos— vive en `docs/respuesta-segunda-fase.md`.
+
 ---
 
 ## Cómo Evaluarlo Rápido
@@ -104,7 +112,7 @@ Si sólo hay unos minutos para revisar el proyecto, esta es la ruta sugerida:
 3. Revisar la **Capacity Curve**: explica por qué más capital no siempre mejora el resultado.
 4. Revisar el **Forward Fan Chart**: comunica incertidumbre y no vende una curva falsa.
 5. Revisar el **Embudo**: cada descarte tiene motivo técnico, no desaparece del sistema.
-6. Ejecutar tests: `484 passed`.
+6. Ejecutar tests: `507 passed`.
 
 Lo más importante no es que aparezcan oportunidades verdes; es que el sistema sea capaz de decir
 con precisión cuándo una oportunidad aparente **no debe operarse**.
@@ -408,7 +416,8 @@ Variables relevantes:
 | Variable | Uso |
 |---|---|
 | `ARB_INGEST_AUTOSTART` | Arranca o desactiva feeds reales. |
-| `ARB_CONTROL_TOKEN` | Protege endpoints de control. |
+| `ARB_CONTROL_TOKEN` | Protege endpoints de control. **Obligatorio con `ARB_ENV=prod`** (el arranque falla sin él). |
+| `ARB_SSE_MAX_CLIENTS` | Tope de clientes SSE concurrentes (default 64; 0 = sin límite). |
 | `ARB_EXEC_LATENCY_MS` | Latencia simulada para leg risk/proyección. |
 | `ARB_MAX_SLIPPAGE` | Filtro pre-trade de slippage. |
 | `ARB_PEG_TOLERANCE` | Tolerancia de desviación stable/USD. |
@@ -471,8 +480,8 @@ Estado verificado:
 
 | Gate | Resultado |
 |---|---|
-| Backend tests | `484 passed` |
-| Cobertura | `92.45%` (`--cov-fail-under=85`) |
+| Backend tests | `507 passed` |
+| Cobertura | `91.03%` (`--cov-fail-under=85`) |
 | Ruff | limpio |
 | Mypy strict | limpio |
 | Frontend typecheck | limpio |

@@ -3,7 +3,7 @@
 import { Badge, Box, Card, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { IconCheck, IconRosetteDiscountCheck, IconX } from '@tabler/icons-react';
 import type { ValidationReport } from '../hooks/useStream';
-import { AQUA, BRAND, NEG, SectionHeader } from './primitives';
+import { AQUA, BRAND, FetchFallback, NEG, SectionHeader } from './primitives';
 
 /**
  * HERO Edge Waterfall (STORY-023, C15): la "prueba de correctitud" del bot. Descompone el
@@ -25,7 +25,15 @@ interface Step {
   kind: 'total' | 'neg' | 'final';
 }
 
-export function EdgeWaterfall({ report }: { report: ValidationReport | null }) {
+export function EdgeWaterfall({
+  report,
+  error = false,
+  onRetry,
+}: {
+  report: ValidationReport | null;
+  error?: boolean;
+  onRetry?: () => void;
+}) {
   if (!report) {
     return (
       <Card h="100%">
@@ -35,9 +43,7 @@ export function EdgeWaterfall({ report }: { report: ValidationReport | null }) {
           help="La 'prueba de correctitud': descompone el ejemplo oficial del reto en cascada — bruto, menos fees, menos rebalanceo = neto ($109.75/BTC) — y verifica que nuestra aritmética coincide con la referencia. Las insignias de abajo son invariantes económicas que deben cumplirse siempre."
           icon={<IconRosetteDiscountCheck size={18} />}
         />
-        <Text size="sm" c="dimmed">
-          Cargando reconciliación…
-        </Text>
+        <FetchFallback error={error} onRetry={onRetry} loading="Cargando reconciliación…" />
       </Card>
     );
   }
@@ -90,6 +96,8 @@ export function EdgeWaterfall({ report }: { report: ValidationReport | null }) {
 
       {/* Cascada de barras */}
       <Box
+        role="img"
+        aria-label={`Cascada de edge por BTC: bruto ${money(gross)}, menos fees ${money(fees)}, menos rebalanceo ${money(rebalance)}, neto ${money(net)} por BTC (objetivo ${money(rec.target)}, ${passed ? 'reconciliado' : 'no reconciliado'}).`}
         style={{
           display: 'grid',
           gridTemplateColumns: `repeat(${steps.length}, 1fr)`,

@@ -9,9 +9,14 @@ services:
     container_name: arbitraje-btc-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Bind SOLO a loopback: el backend no lleva TLS y su auth es opcional; en un host
+      # público debe quedar detrás de un proxy (nginx) que termine TLS — nunca expuesto directo.
+      - "127.0.0.1:8000:8000"
     environment:
       - ARB_ENV=prod
+      # Obligatorio: con ARB_ENV=prod el backend se niega a arrancar sin token de control
+      # (ver backend/app/config.py). Exporta uno antes: openssl rand -hex 24
+      - ARB_CONTROL_TOKEN=${ARB_CONTROL_TOKEN:?define ARB_CONTROL_TOKEN (p.ej. openssl rand -hex 24)}
     # Para overrides desde archivo, crea backend/.env y descomenta:
     # env_file:
     #   - ../backend/.env

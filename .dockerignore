@@ -1,0 +1,18 @@
+# Contexto de build = raíz del repo (deploy/ y deploy/standalone/). Sin esto, `COPY backend/`
+# hornea en la imagen la DB local (llegó a 14 GB), .env con secretos y artefactos de dev.
+.git
+**/.env
+**/.env.*
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/__pycache__/
+**/.venv/
+**/.coverage
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+frontend/node_modules/
+frontend/.next/
+docs/
+documentos/

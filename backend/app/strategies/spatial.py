@@ -1,4 +1,10 @@
-"""Adapter StrategyModule para el detector espacial existente (PRD-008)."""
+"""Adapter StrategyModule para el detector espacial existente (PRD-008).
+
+ESTADO: contrato/introspección, sin consumidor en el hot path. El motor vivo cablea
+`SpatialDetector` directamente (`run_engine`); este adapter existe para cumplir la
+interfaz unificada de PRD-008 (tests de contrato en `tests/test_strategy_modules.py`)
+y para extender `/strategies` sin tocar el motor. No es código muerto accidental.
+"""
 from __future__ import annotations
 
 from ..engine.detector import SpatialDetector

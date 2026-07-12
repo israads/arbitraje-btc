@@ -13,5 +13,9 @@ ENV NEXT_PUBLIC_API_BASE=""
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
+# Usuario no privilegiado (imagen node trae `node`): `next start` escribe cache en .next.
+RUN chown -R node:node /app/.next
+USER node
+
 EXPOSE 3000
 CMD ["npm", "run", "start"]

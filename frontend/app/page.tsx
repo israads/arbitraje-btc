@@ -30,6 +30,7 @@ import { SurvivalCalibrationPanel } from '../components/SurvivalCalibrationPanel
 import { OpportunityExplainDrawer } from '../components/OpportunityExplainDrawer';
 import { StrategyLabPanel } from '../components/StrategyLabPanel';
 import { NaiveVsEdgePanel } from '../components/NaiveVsEdgePanel';
+import { BusinessThesisCard } from '../components/BusinessThesisCard';
 import { StoragePanel } from '../components/StoragePanel';
 import { WinsPanel } from '../components/WinsPanel';
 import { ConfigPanel } from '../components/ConfigPanel';
@@ -43,7 +44,7 @@ function statusColor(s: ConnStatus): string {
   if (s === 'live') return 'brand';
   if (s === 'reconnecting' || s === 'connecting') return 'yellow';
   if (s === 'replay') return 'aqua';
-  return 'red';
+  return 'red'; // stale: el watchdog detectó socket abierto sin eventos → "SIN DATOS"
 }
 
 const STATUS_LABEL: Record<ConnStatus, string> = {
@@ -105,18 +106,26 @@ function HeaderStat({ label, value, color }: { label: string; value: string; col
   );
 }
 
-/** Franja de métricas en vivo del header (estilo terminal): ref BTC · venues · cruces. */
+/** Franja de métricas en vivo del header (estilo terminal): ref BTC · venues · cruces.
+ * `compact`: versión móvil (se muestra bajo el header cuando la franja del header se oculta). */
 function HeaderStats({
   quotes,
   detected,
+  compact = false,
 }: {
   quotes: Record<string, Q>;
   detected: number;
+  compact?: boolean;
 }) {
   const ref = btcReference(quotes);
   const live = venuesLive(quotes);
   return (
-    <Group gap="md" wrap="nowrap" visibleFrom="md">
+    <Group
+      gap="md"
+      wrap="nowrap"
+      visibleFrom={compact ? undefined : 'md'}
+      hiddenFrom={compact ? 'md' : undefined}
+    >
       <HeaderStat label="BTC ref" value={usd(ref)} color="aqua.4" />
       <Divider orientation="vertical" my={6} />
       <HeaderStat label="Venues" value={live ? `${live} live` : '—'} />
@@ -199,6 +208,7 @@ export default function DashboardPage() {
   const {
     status, quotes, routeStats, detectedCount, metrics, breakers, demo, pnl, validation,
     projection, capacity, forward, survival, naiveVsEdge, wins,
+    errors, retryValidation, retryHeavy,
   } = useStream(strategyParams);
   const spread = crossVenueSpread(quotes);
   const total = pnl?.total_pnl ?? 0;
@@ -206,6 +216,16 @@ export default function DashboardPage() {
   const [tourOpen, setTourOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [tab, setTab] = useState<string>('resumen');
+
+  /** Navega a una pestaña y (opcional) hace scroll al panel que demuestra el dato. */
+  const goTo = (target: string, anchorId?: string) => {
+    setTab(target);
+    if (anchorId) {
+      window.setTimeout(() => {
+        document.getElementById(anchorId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 200);
+    }
+  };
 
   return (
     <AppShell header={{ height: 64 }} padding={{ base: 'sm', sm: 'lg' }}>
@@ -240,9 +260,15 @@ export default function DashboardPage() {
               Tour
             </Button>
             {demo.active && (
-              <Badge color="orange" variant="light" visibleFrom="xs">
-                DEMO DATA
-              </Badge>
+              <>
+                {/* Siempre visible: en móvil versión compacta para no desbordar el header. */}
+                <Badge color="orange" variant="light" visibleFrom="xs">
+                  DEMO DATA
+                </Badge>
+                <Badge color="orange" variant="light" hiddenFrom="xs" px={6}>
+                  DEMO
+                </Badge>
+              </>
             )}
             {breakers.halted && (
               <Badge color="red" variant="filled">
@@ -256,6 +282,8 @@ export default function DashboardPage() {
 
       <AppShell.Main>
         <Stack gap="lg" maw={1400} mx="auto">
+          {/* Versión móvil de las métricas del header (en desktop van dentro del header). */}
+          <HeaderStats quotes={quotes} detected={detectedCount} compact />
           <Text c="dimmed" size="sm" maw={820}>
             Medimos cada spread como si fuera una operación real. La mayoría muere por fees,
             slippage, peg o latencia: aquí está{' '}
@@ -319,9 +347,18 @@ export default function DashboardPage() {
               </Tabs.Tab>
             </Tabs.List>
 
-            {/* RESUMEN: la tesis de un vistazo */}
-            <Tabs.Panel value="resumen">
+            {/* RESUMEN: la tesis de un vistazo. keepMounted selectivo: este panel tiene los
+                LiveLineChart en vivo — desmontarlo perdería el histórico de las sparklines. */}
+            <Tabs.Panel value="resumen" keepMounted>
               <Stack gap="lg">
+                <BusinessThesisCard
+                  frontier={projection}
+                  forward={forward}
+                  projectionError={errors.projection}
+                  forwardError={errors.forward}
+                  onRetry={retryHeavy}
+                  onNavigate={goTo}
+                />
                 <Grid gutter="lg" align="stretch">
                   <Grid.Col span={{ base: 12, md: 4 }} id="tour-naive-edge">
                     <NaiveVsEdgePanel report={naiveVsEdge} />
@@ -355,7 +392,7 @@ export default function DashboardPage() {
             <Tabs.Panel value="correctitud">
               <Stack gap="lg">
                 <Box id="tour-edge-waterfall">
-                  <EdgeWaterfall report={validation} />
+                  <EdgeWaterfall report={validation} error={errors.validation} onRetry={retryValidation} />
                 </Box>
                 <PricesTable quotes={quotes} />
                 <FunnelPanel metrics={metrics} />
@@ -367,7 +404,7 @@ export default function DashboardPage() {
               <Stack gap="lg">
                 <Grid gutter="lg" align="stretch">
                   <Grid.Col span={{ base: 12, md: 7 }} id="tour-frontier">
-                    <BreakEvenFrontier frontier={projection} />
+                    <BreakEvenFrontier frontier={projection} error={errors.projection} onRetry={retryHeavy} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, md: 5 }}>
                     <LifetimeHistogram metrics={metrics} />
@@ -375,16 +412,16 @@ export default function DashboardPage() {
                 </Grid>
                 <Grid gutter="lg" align="stretch">
                   <Grid.Col span={{ base: 12, md: 5 }}>
-                    <CapacityCurve capacity={capacity} />
+                    <CapacityCurve capacity={capacity} error={errors.capacity} onRetry={retryHeavy} />
                   </Grid.Col>
                   <Grid.Col span={{ base: 12, md: 7 }} id="tour-forward">
-                    <ForwardFanChart forward={forward} />
+                    <ForwardFanChart forward={forward} error={errors.forward} onRetry={retryHeavy} />
                   </Grid.Col>
                 </Grid>
                 <Box id="tour-lattice">
                   <ProbabilityLattice forward={forward} />
                 </Box>
-                <SurvivalCalibrationPanel report={survival} />
+                <SurvivalCalibrationPanel report={survival} error={errors.survival} onRetry={retryHeavy} />
               </Stack>
             </Tabs.Panel>
 

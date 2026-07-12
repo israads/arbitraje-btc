@@ -14,7 +14,10 @@ services:
     image: arbitraje-btc-backend
     environment:
       - ARB_ENV=prod
-      - ARB_CONTROL_TOKEN=${ARB_CONTROL_TOKEN:-}
+      # Obligatorio (sin default vacío): este stack es público — sin token, el kill-switch,
+      # la purga de BD y la config quedarían abiertos a Internet. El backend además se niega
+      # a arrancar con ARB_ENV=prod y token vacío (ver backend/app/config.py).
+      - ARB_CONTROL_TOKEN=${ARB_CONTROL_TOKEN:?define ARB_CONTROL_TOKEN (p.ej. openssl rand -hex 24)}
     expose:
       - "8000"
     restart: unless-stopped

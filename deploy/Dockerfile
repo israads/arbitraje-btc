@@ -10,6 +10,11 @@ WORKDIR /app
 COPY backend/ /app/
 RUN pip install --upgrade pip && pip install .
 
+# Usuario no privilegiado: un contenedor comprometido no obtiene root. /app debe ser
+# suyo porque la app escribe ahí la DB SQLite (db_url por defecto: ./arbitraje.db).
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8000
 
 # --timeout-keep-alive 300: el default de 5 s corta los SSE inactivos.

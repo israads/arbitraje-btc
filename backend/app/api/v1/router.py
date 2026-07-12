@@ -3,9 +3,11 @@ vivo (`/quotes`, `/opportunities`). El resto son stubs hasta su story."""
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import math
 import time
+from collections import OrderedDict
 from collections.abc import AsyncGenerator, Callable
 from functools import partial
 from typing import Any, Literal, cast
@@ -37,24 +39,47 @@ _PROJECTION_SEM = asyncio.Semaphore(1)
 # s — las proyecciones cambian lento. ≥ que el poll pesado del cliente (30s) para que el poll
 # en estado estacionario sirva de cache y no recompute Monte Carlo cada vez en el único worker.
 _PROJECTION_TTL = 35.0
-_PROJECTION_CACHE: dict[str, tuple[float, Any]] = {}
+# LRU ACOTADO: las claves incluyen parámetros libres del cliente (latency_ms, fee_bps, n_paths…)
+# — un dict sin tope sería una fuga de memoria y un vector de DoS trivial (variar query params
+# crea claves ilimitadas con ForwardResult grandes). El TTL solo gobierna frescura; la cota
+# gobierna memoria. 64 entradas cubren de sobra los polls del dashboard + what-if del jurado.
+_PROJECTION_CACHE_MAX = 64
+_PROJECTION_CACHE: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 _MIN_WHAT_IF_FILL_RATIO = 0.10
+
+
+def _cache_get(key: str, now: float) -> Any | None:
+    """Hit fresco → lo marca como recién usado (LRU) y lo devuelve; expirado/miss → None."""
+    hit = _PROJECTION_CACHE.get(key)
+    if hit is None or now - hit[0] >= _PROJECTION_TTL:
+        return None
+    _PROJECTION_CACHE.move_to_end(key)
+    return hit[1]
+
+
+def _cache_put(key: str, value: Any, now: float) -> None:
+    """Inserta y aplica la política: purga expiradas y desaloja la menos usada si excede el tope."""
+    _PROJECTION_CACHE[key] = (now, value)
+    _PROJECTION_CACHE.move_to_end(key)
+    for k in [k for k, (ts, _) in _PROJECTION_CACHE.items() if now - ts >= _PROJECTION_TTL]:
+        del _PROJECTION_CACHE[k]
+    while len(_PROJECTION_CACHE) > _PROJECTION_CACHE_MAX:
+        _PROJECTION_CACHE.popitem(last=False)
 
 
 async def _cached_projection(key: str, compute: Callable[[], Any]) -> Any:
     """Devuelve la proyección `key` desde cache si es fresca; si no, la computa una sola vez
     (threadpool + semáforo) y la cachea. Double-check tras el semáforo: si otra petición la
     calculó mientras esperábamos, se reusa en vez de recomputar."""
-    now = time.monotonic()
-    hit = _PROJECTION_CACHE.get(key)
-    if hit is not None and now - hit[0] < _PROJECTION_TTL:
-        return hit[1]
+    cached = _cache_get(key, time.monotonic())
+    if cached is not None:
+        return cached
     async with _PROJECTION_SEM:
-        hit = _PROJECTION_CACHE.get(key)
-        if hit is not None and time.monotonic() - hit[0] < _PROJECTION_TTL:
-            return hit[1]
+        cached = _cache_get(key, time.monotonic())
+        if cached is not None:
+            return cached
         result = await run_in_threadpool(compute)
-        _PROJECTION_CACHE[key] = (time.monotonic(), result)
+        _cache_put(key, result, time.monotonic())
         return result
 
 
@@ -63,10 +88,11 @@ def require_control_token(
 ) -> None:
     """Auth mínima de los endpoints de control. Si `settings.control_token` está vacío (dev),
     pasa siempre; si está set, exige el header `X-Control-Token` exacto. Lee el token del
-    `ctx.settings` inyectado en el lifespan (respeta los settings de tests)."""
+    `ctx.settings` inyectado en el lifespan (respeta los settings de tests). La comparación es
+    constant-time (`hmac.compare_digest`) para no filtrar prefijos por timing."""
     ctx = request.app.state.ctx
     expected = ctx.settings.control_token or ""
-    if expected and x_control_token != expected:
+    if expected and not hmac.compare_digest(x_control_token or "", expected):
         raise HTTPException(status_code=401, detail="invalid or missing X-Control-Token")
 
 
@@ -330,6 +356,12 @@ async def stream(request: Request) -> EventSourceResponse:
     (y `execution`/`pnl`/`metrics` en stories posteriores). Cola por cliente +
     corte por desconexión."""
     ctx = request.app.state.ctx
+    # Cota de clientes concurrentes (DoS): /stream está exento del ApiGuardMiddleware
+    # (streaming + BaseHTTPMiddleware no conviven) y cada cliente cuesta una cola acotada
+    # en memoria. Sin tope, N conexiones sostenidas agotan memoria en el deploy público.
+    max_clients = ctx.settings.sse_max_clients
+    if max_clients > 0 and ctx.hub.client_count >= max_clients:
+        raise HTTPException(status_code=503, detail="too many SSE clients; retry later")
 
     async def gen() -> AsyncGenerator[dict[str, str], None]:
         async for ev in ctx.hub.subscribe():

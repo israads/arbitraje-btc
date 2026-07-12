@@ -1,4 +1,10 @@
-"""Adapter StrategyModule para el detector z-score existente (PRD-008)."""
+"""Adapter StrategyModule para el detector z-score existente (PRD-008).
+
+ESTADO: contrato/introspección, sin consumidor en el hot path. El motor vivo cablea
+`StatZDetector` directamente (`run_engine`); este adapter existe para cumplir la
+interfaz unificada de PRD-008 (tests de contrato en `tests/test_strategy_modules.py`).
+No es código muerto accidental.
+"""
 from __future__ import annotations
 
 from ..engine.statz import StatZDetector

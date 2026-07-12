@@ -9,7 +9,7 @@ simulación con datos públicos; ninguna operación real.
 
 **Stack:** backend FastAPI (1 worker, estado en memoria) + pipeline asyncio · frontend Next.js +
 Mantine (dark, verde #16D67F, Outfit/Inter/JetBrains Mono) · persistencia SQLite async · MCP server
-read-only. **498 tests** (40 archivos), ruff + mypy --strict limpios; frontend tsc + lint + build
+read-only. **507 tests** (41 archivos), ruff + mypy --strict limpios; frontend tsc + lint + build
 limpios (cero warnings).
 
 ## Backend (`backend/app/`)
@@ -68,7 +68,7 @@ cd backend && ruff check . && mypy app && mypy mcp_server
 cd frontend && npx tsc --noEmit && npx next lint && npx next build
 ```
 
-Verde de referencia: 498 tests · ruff/mypy limpios · frontend tsc/lint/build sin warnings.
+Verde de referencia: 507 tests · ruff/mypy limpios · frontend tsc/lint/build sin warnings.
 
 ## Estado / qué falta (actualizar cada ciclo)
 

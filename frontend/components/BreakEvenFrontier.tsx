@@ -3,7 +3,7 @@
 import { Badge, Box, Card, Group, Text, Tooltip } from '@mantine/core';
 import { IconGridDots } from '@tabler/icons-react';
 import type { EdgeFrontier, FrontierBestCell } from '../hooks/useStream';
-import { SectionHeader } from './primitives';
+import { FetchFallback, SectionHeader } from './primitives';
 
 /**
  * Projection Suite v2 — Capa 1: Break-even Frontier (Execution-Conditioned). Heatmap tamaño ×
@@ -38,7 +38,15 @@ function BestChip({ label, cell }: { label: string; cell: FrontierBestCell | nul
   );
 }
 
-export function BreakEvenFrontier({ frontier }: { frontier: EdgeFrontier | null }) {
+export function BreakEvenFrontier({
+  frontier,
+  error = false,
+  onRetry,
+}: {
+  frontier: EdgeFrontier | null;
+  error?: boolean;
+  onRetry?: () => void;
+}) {
   if (!frontier) {
     return (
       <Card h="100%">
@@ -48,7 +56,7 @@ export function BreakEvenFrontier({ frontier }: { frontier: EdgeFrontier | null 
           help="Un mapa de calor: para cada tamaño de trade y nivel de comisión, el edge neto por BTC. Verde = rentable, rojo = pierde. A comisión retail casi todo es rojo; a comisión institucional aparece la zona rentable (el sweet spot)."
           icon={<IconGridDots size={18} />}
         />
-        <Text size="sm" c="dimmed">Proyectando edge ejecutable…</Text>
+        <FetchFallback error={error} onRetry={onRetry} loading="Proyectando edge ejecutable…" />
       </Card>
     );
   }

@@ -7,6 +7,7 @@ exploración. In-memory a propósito: una sola instancia (single-worker); no hay
 """
 from __future__ import annotations
 
+import hmac
 import time
 from collections import defaultdict, deque
 
@@ -53,7 +54,10 @@ class ApiGuardMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS" or any(path.startswith(p) for p in _EXEMPT_PREFIXES):
             return await call_next(request)
 
-        if self._api_key and request.headers.get("x-api-key") != self._api_key:
+        # compare_digest: comparación constant-time — no filtra prefijos de la clave por timing.
+        if self._api_key and not hmac.compare_digest(
+            request.headers.get("x-api-key") or "", self._api_key
+        ):
             return JSONResponse({"detail": "invalid or missing API key"}, status_code=401)
 
         if self._rate > 0:

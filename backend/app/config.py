@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     # --- Bus / concurrencia (C4, C11) ---
     bus_maxsize: int = 1000            # cola acotada, política drop-oldest
     sse_client_queue_maxsize: int = 500
+    # Tope de clientes SSE concurrentes: cada cliente cuesta una cola de `maxsize` eventos en
+    # memoria y /stream no pasa por el rate limiter (streaming + BaseHTTPMiddleware no conviven),
+    # así que sin cota es un vector de DoS trivial en el deploy público. 0 = sin límite (dev).
+    sse_max_clients: int = 64
     sse_ping_seconds: int = 15
     quote_throttle_ms: int = 100       # máx. ~10 quotes/s por venue hacia el cliente
 
@@ -237,6 +241,18 @@ class Settings(BaseSettings):
     db_retention_hours: float = 24.0
     db_prune_interval_s: float = 300.0  # cada cuánto corre la poda de fondo
     db_vacuum_on_prune: bool = False    # VACUUM tras podar (recupera espacio en disco; costoso)
+
+    @model_validator(mode="after")
+    def _require_control_token_in_prod(self) -> Settings:
+        """En prod el plano de control NUNCA arranca sin auth: con token vacío, kill-switch,
+        purga de BD y rewrites de config quedarían abiertos a Internet. Fallar el arranque es
+        deliberado — un deploy inseguro debe ser imposible de levantar por accidente."""
+        if self.env == "prod" and not self.control_token:
+            raise ValueError(
+                "ARB_CONTROL_TOKEN es obligatorio con ARB_ENV=prod: los endpoints de control "
+                "(kill-switch, retención, config) no pueden quedar sin auth en un deploy público."
+            )
+        return self
 
     @property
     def enabled_exchanges(self) -> list[ExchangeConfig]:

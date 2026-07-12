@@ -8,6 +8,8 @@ Implementación: STORY-004 (espacial), STORY-008 (neto), STORY-019 (z), STORY-02
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Callable
 
 from ..bus import BoundedQueue
@@ -19,6 +21,12 @@ from .prioritizer import Prioritizer
 from .statz import StatZDetector
 
 __all__ = ["NetEvaluator", "Prioritizer", "SpatialDetector", "StatZDetector", "run_engine"]
+
+logger = logging.getLogger("app.engine")
+
+# Cada cuántas opps emitidas se cede el event loop dentro de un tick: un burst de cruces
+# (mercado convulso) no debe congelar ingesta/SSE durante todo el lote.
+_YIELD_EVERY_OPPS = 64
 
 
 async def run_engine(
@@ -49,21 +57,30 @@ async def run_engine(
         evaluator = NetEvaluator(detector.settings)
     while True:
         nb = await queue.get()
-        # El detector espacial almacena `nb` en `detector.books` ANTES de que el detector
-        # estadístico lea los mids de la contraparte, por lo que ve el libro más reciente.
-        opps = detector.on_book(nb)
-        if stat_detector is not None:
-            opps = [*opps, *stat_detector.on_book(nb, detector.books)]
-        # Evalúa el neto de TODAS antes de priorizar (C7 necesita el net_pnl/slippage/q de C6).
-        for opp in opps:
-            buy_book = detector.books.get(opp.buy_venue)
-            sell_book = detector.books.get(opp.sell_venue)
-            # El detector sólo emite cruces con ambos books presentes; el guard evita
-            # romper si la API cambia.
-            if buy_book is not None and sell_book is not None:
-                evaluator.evaluate(opp, buy_book, sell_book)
-        # C7 (STORY-020): rankea por score desc (las viables primero); asigna `opp.score`.
-        if prioritizer is not None:
-            opps = prioritizer.rank(opps)
-        for opp in opps:
-            on_opp(opp)
+        # Supervisión (C8/NFR): una excepción no prevista en el procesamiento de UN book no
+        # puede matar la task del motor en silencio (la detección se detendría el resto de la
+        # sesión). Se loggea y se continúa con el siguiente tick. `CancelledError` es
+        # BaseException y NO la captura este bloque: la cancelación de shutdown sigue limpia.
+        try:
+            # El detector espacial almacena `nb` en `detector.books` ANTES de que el detector
+            # estadístico lea los mids de la contraparte, por lo que ve el libro más reciente.
+            opps = detector.on_book(nb)
+            if stat_detector is not None:
+                opps = [*opps, *stat_detector.on_book(nb, detector.books)]
+            # Evalúa el neto de TODAS antes de priorizar (C7 necesita net_pnl/slippage/q de C6).
+            for opp in opps:
+                buy_book = detector.books.get(opp.buy_venue)
+                sell_book = detector.books.get(opp.sell_venue)
+                # El detector sólo emite cruces con ambos books presentes; el guard evita
+                # romper si la API cambia.
+                if buy_book is not None and sell_book is not None:
+                    evaluator.evaluate(opp, buy_book, sell_book)
+            # C7 (STORY-020): rankea por score desc (las viables primero); asigna `opp.score`.
+            if prioritizer is not None:
+                opps = prioritizer.rank(opps)
+            for i, opp in enumerate(opps, start=1):
+                on_opp(opp)
+                if i % _YIELD_EVERY_OPPS == 0:
+                    await asyncio.sleep(0)
+        except Exception:
+            logger.exception("error procesando book de %s; el motor continúa", nb.exchange)

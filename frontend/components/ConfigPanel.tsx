@@ -5,6 +5,7 @@ import {
   Alert, Badge, Box, Button, Card, Group, NumberInput, ScrollArea,
   Switch, Table, Text,
 } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { IconDeviceFloppy, IconSettings2, IconAlertTriangle } from '@tabler/icons-react';
 import { API_BASE } from '../lib/config';
 import { SectionHeader, VenueTag } from './primitives';
@@ -94,14 +95,14 @@ export function ConfigPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (r.ok) {
-        const data = await r.json();
-        if (data.config) setCfg(data.config);
-        setDirty(false);
-        setSaved(true);
-      }
+      if (!r.ok) throw new Error(`${r.status}`);
+      const data = await r.json();
+      if (data.config) setCfg(data.config);
+      setDirty(false);
+      setSaved(true);
+      notifications.show({ message: 'Configuración guardada', color: 'brand' });
     } catch {
-      /* sin cambios si falla */
+      notifications.show({ message: 'No se pudo guardar la configuración', color: 'red' });
     } finally {
       setBusy(false);
     }

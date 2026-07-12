@@ -58,13 +58,19 @@ class Watchdog:
         prev: dict[str, ConnectionStatus] = {}
         while not self._stop.is_set():
             await asyncio.sleep(interval)
-            status = self.evaluate(time.monotonic())
-            self._state.feed_status = status
-            for ex, st in status.items():
-                before = prev.get(ex)
-                if before is not None and before != st:
-                    logger.warning("feed %s: %s -> %s", ex, before.value, st.value)
-                prev[ex] = st
+            # Supervisión: una excepción imprevista no puede matar la task en silencio —
+            # `feed_status` quedaría congelado y los breakers de staleness ciegos. Se loggea
+            # y se continúa. `CancelledError` (BaseException) sigue propagando para shutdown.
+            try:
+                status = self.evaluate(time.monotonic())
+                self._state.feed_status = status
+                for ex, st in status.items():
+                    before = prev.get(ex)
+                    if before is not None and before != st:
+                        logger.warning("feed %s: %s -> %s", ex, before.value, st.value)
+                    prev[ex] = st
+            except Exception:
+                logger.exception("error en watchdog; continúa")
 
     def stop(self) -> None:
         self._stop.set()

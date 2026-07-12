@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE } from '../lib/config';
 
 export type ConnStatus =
@@ -389,6 +389,21 @@ export interface RouteStat {
 const MAX_OPPS = 50;
 const EMPTY_BREAKERS: BreakerStatus = { halted: false, active: [], breakers: [] };
 const EMPTY_DEMO: DemoStatus = { active: false, mode: 'auto', source: 'live', badge: null, since: null };
+// Watchdog de staleness: si el socket está abierto pero no llega NINGÚN evento en este
+// intervalo, "EN VIVO" estaría mintiendo → status pasa a `stale` hasta el siguiente evento.
+const STALE_AFTER_MS = 10_000;
+const STALE_CHECK_MS = 2_000;
+
+/** Fetches con estado de error visible en UI (para distinguir "cargando" de "falló"). */
+export type FetchErrorKey = 'validation' | 'projection' | 'capacity' | 'forward' | 'survival';
+export type FetchErrors = Record<FetchErrorKey, boolean>;
+const NO_ERRORS: FetchErrors = {
+  validation: false,
+  projection: false,
+  capacity: false,
+  forward: false,
+  survival: false,
+};
 
 /** Parse defensivo de un evento SSE: nunca lanza. Un frame corrupto/incompleto del backend
  * no debe romper el listener (que dejaría de procesar los eventos siguientes de ese tipo). */
@@ -449,6 +464,7 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const [survival, setSurvival] = useState<SurvivalCalibration | null>(null);
   const [naiveVsEdge, setNaiveVsEdge] = useState<NaiveVsEdgeReport | null>(null);
   const [wins, setWins] = useState<WinsReport | null>(null);
+  const [errors, setErrors] = useState<FetchErrors>(NO_ERRORS);
 
   const quotesBuf = useRef<Record<string, Quote>>({});
   const oppsBuf = useRef<Opportunity[]>([]);
@@ -460,7 +476,48 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const dirtyQuotes = useRef(false);
   const dirtyOpps = useRef(false);
   const dirtyMetrics = useRef(false);
+  // Params actuales accesibles desde closures estables (retryHeavy) sin recrear el SSE.
+  const paramsRef = useRef(strategyParams);
+  paramsRef.current = strategyParams;
+  // Timestamp del último evento SSE recibido (watchdog de staleness).
+  const lastEventRef = useRef(Date.now());
+  // AbortController vigente de los fetch pesados (para que retryHeavy comparta su señal).
+  const heavyAcRef = useRef<AbortController | null>(null);
 
+  const markError = useCallback((key: FetchErrorKey, value: boolean) => {
+    setErrors((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
+  }, []);
+
+  /** Reconciliación + invariantes: determinista → una vez al montar; reintentable desde la UI. */
+  const retryValidation = useCallback(() => {
+    fetchJson<ValidationReport>(`${API_BASE}/api/v1/validation`)
+      .then((v) => { setValidation(v); markError('validation', false); })
+      .catch(() => markError('validation', true));
+  }, [markError]);
+
+  /** Fetch pesados (numpy/Monte Carlo): projection/capacity/forward/survival. Los únicos que
+   * dependen de los params del Strategy Lab — se relanzan al cambiarlos SIN tocar el SSE. */
+  const pullHeavy = useCallback((params: StrategyLabParams, signal: AbortSignal) => {
+    const opt = { signal };
+    const track = <T,>(key: FetchErrorKey, promise: Promise<T>, set: (d: T) => void) => {
+      promise
+        .then((d) => { set(d); markError(key, false); })
+        .catch(() => { if (!signal.aborted) markError(key, true); });
+    };
+    track('projection', fetchJson<EdgeFrontier>(projectionUrl(params), opt), setProjection);
+    track('capacity', fetchJson<EdgeCapacity>(capacityUrl(params), opt), setCapacity);
+    track('forward', fetchJson<ForwardProjection>(forwardUrl(params), opt), setForward);
+    track('survival', fetchJson<SurvivalCalibration>(survivalUrl(params), opt), setSurvival);
+  }, [markError]);
+
+  const retryHeavy = useCallback(() => {
+    const signal = heavyAcRef.current?.signal ?? new AbortController().signal;
+    pullHeavy(paramsRef.current, signal);
+  }, [pullHeavy]);
+
+  // Ciclo de vida del SSE + polling ligero: SIN dependencias de los params de estrategia.
+  // Cambiar el Strategy Lab NO debe cerrar/reabrir el EventSource (parpadeo de status) ni
+  // re-pedir los snapshots deterministas.
   useEffect(() => {
     // Snapshot inicial (estado antes del primer evento).
     fetchJson<{ quotes?: Quote[] }>(`${API_BASE}/api/v1/quotes`)
@@ -473,20 +530,35 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       .then((m) => { metricsBuf.current = m; dirtyMetrics.current = true; })
       .catch(() => undefined);
     // Reconciliación + invariantes: determinista → una sola vez. Las 4 proyecciones
-    // (projection/capacity/forward/survival) las dispara pullHeavy() abajo en el mismo mount,
-    // así que NO se piden aquí (evita 4 fetches duplicados al arrancar).
-    fetchJson<ValidationReport>(`${API_BASE}/api/v1/validation`)
-      .then(setValidation)
-      .catch(() => undefined);
+    // (projection/capacity/forward/survival) las dispara el effect de params (pullHeavy).
+    retryValidation();
 
     const es = new EventSource(`${API_BASE}/api/v1/stream`);
-    es.onopen = () => setStatus('live');
+    // Cada evento recibido "toca" el watchdog; si estábamos en `stale`, volvemos a `live`.
+    const touch = () => {
+      lastEventRef.current = Date.now();
+      setStatus((s) => (s === 'stale' ? 'live' : s));
+    };
+    es.onopen = () => {
+      lastEventRef.current = Date.now();
+      setStatus('live');
+    };
     // EventSource reintenta solo; reflejamos "reconnecting" sólo si la conexión se cerró.
     es.onerror = () => {
       if (es.readyState !== EventSource.OPEN) setStatus('reconnecting');
     };
+    // Watchdog de staleness: socket abierto pero sin eventos >10s ⇒ "EN VIVO" mentiría.
+    const watchdog = setInterval(() => {
+      if (
+        es.readyState === EventSource.OPEN &&
+        Date.now() - lastEventRef.current > STALE_AFTER_MS
+      ) {
+        setStatus('stale');
+      }
+    }, STALE_CHECK_MS);
 
     es.addEventListener('quote', (e) => {
+      touch();
       const q = parseEvent<Quote>(e);
       if (!q) return;
       quotesBuf.current[q.exchange] = q;
@@ -494,6 +566,7 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     });
 
     es.addEventListener('opportunity', (e) => {
+      touch();
       const o = parseEvent<Opportunity>(e);
       if (!o) return;
       oppsBuf.current = [o, ...oppsBuf.current].slice(0, MAX_OPPS);
@@ -537,6 +610,7 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     });
 
     es.addEventListener('metrics', (e) => {
+      touch();
       const m = parseEvent<Metrics>(e);
       if (!m) return;
       metricsBuf.current = m;
@@ -545,18 +619,21 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
 
     // P&L en tiempo real (push tras cada ejecución, throttled). Antes era polling /pnl cada 2s.
     es.addEventListener('pnl', (e) => {
+      touch();
       const p = parseEvent<Pnl>(e);
       if (p) setPnl(p);
     });
 
     // breaker/demo son de baja frecuencia (sólo al cambiar) → setState directo.
     es.addEventListener('breaker', (e) => {
+      touch();
       const b = parseEvent<BreakerStatus>(e);
       if (b) setBreakers(b);
     });
     // `status` refleja SÓLO la conectividad SSE (onopen/onerror); el badge "DEMO DATA" se
     // deriva de `demo.active` en la página (evita que un reconnect pise el estado de demo).
     es.addEventListener('demo', (e) => {
+      touch();
       const d = parseEvent<DemoStatus>(e);
       if (d) setDemo(d);
     });
@@ -602,30 +679,39 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
         .then(setWins)
         .catch(() => undefined);
     };
-    // Proyección viva: la frontier/capacity dependen del book actual (el backend cae a demo
-    // sin ruta viva); forward re-muestrea la grabación. Fallos no rompen el resto.
-    // Cómputo numpy/Monte Carlo pesado ⇒ refresco espaciado (no a 5s) para no saturar el
-    // único worker del backend en 2 cores; n_paths moderado.
-    const pullHeavy = () => {
-      const opt = { signal: ac.signal };
-      fetchJson<EdgeFrontier>(projectionUrl(strategyParams), opt).then(setProjection).catch(() => undefined);
-      fetchJson<EdgeCapacity>(capacityUrl(strategyParams), opt).then(setCapacity).catch(() => undefined);
-      fetchJson<ForwardProjection>(forwardUrl(strategyParams), opt).then(setForward).catch(() => undefined);
-      fetchJson<SurvivalCalibration>(survivalUrl(strategyParams), opt).then(setSurvival).catch(() => undefined);
-    };
     pullLight();
-    pullHeavy();
     const pollLight = setInterval(pullLight, 5000);
-    const pollHeavy = setInterval(pullHeavy, 30000);
 
     return () => {
       ac.abort();
       es.close();
       cancelAnimationFrame(raf);
       clearInterval(pollLight);
-      clearInterval(pollHeavy);
+      clearInterval(watchdog);
     };
+  }, [retryValidation]);
+
+  // Proyección viva (fetch pesados): la frontier/capacity dependen del book actual (el backend
+  // cae a demo sin ruta viva); forward re-muestrea la grabación. Cómputo numpy/Monte Carlo
+  // pesado ⇒ refresco espaciado (no a 5s) para no saturar el único worker del backend en
+  // 2 cores. Este effect SÍ depende de los params del Strategy Lab: al aplicarlos se relanzan
+  // sólo estos 4 fetch — el SSE del effect anterior no se toca. AbortController propio:
+  // cancela los fetch en vuelo al cambiar params o desmontar (patrón seguro bajo StrictMode).
+  useEffect(() => {
+    const ac = new AbortController();
+    heavyAcRef.current = ac;
+    const params = paramsRef.current;
+    pullHeavy(params, ac.signal);
+    const pollHeavy = setInterval(() => pullHeavy(params, ac.signal), 30000);
+    return () => {
+      ac.abort();
+      clearInterval(pollHeavy);
+      if (heavyAcRef.current === ac) heavyAcRef.current = null;
+    };
+    // Depende de los 6 valores primitivos (no del objeto) para no refetchear por identidad.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    pullHeavy,
     strategyParams.fee_bps,
     strategyParams.latency_ms,
     strategyParams.n_paths,
@@ -637,6 +723,6 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   return {
     status, quotes, opportunities, routeStats, detectedCount,
     metrics, breakers, demo, pnl, validation, projection, capacity, forward, survival, naiveVsEdge,
-    wins,
+    wins, errors, retryValidation, retryHeavy,
   };
 }

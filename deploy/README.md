@@ -27,7 +27,10 @@ cd frontend && npm ci && npm run build && npm run start   # :3000 (nginx lo prox
 ## Opcion B - Docker
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d --build   # backend en :8000
+# ARB_CONTROL_TOKEN es OBLIGATORIO: la compose corre con ARB_ENV=prod y el backend se niega
+# a arrancar sin token (los endpoints de control no pueden quedar sin auth en público).
+export ARB_CONTROL_TOKEN="$(openssl rand -hex 24)"
+docker compose -f deploy/docker-compose.yml up -d --build   # backend en 127.0.0.1:8000
 ```
 
 ## Verificación

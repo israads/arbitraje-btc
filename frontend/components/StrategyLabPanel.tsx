@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Badge, Button, Card, Group, NumberInput, SimpleGrid, Stack, Text } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { IconAdjustmentsHorizontal, IconRefresh, IconSettingsCheck } from '@tabler/icons-react';
 import { API_BASE } from '../lib/config';
 import type { StrategyLabParams } from '../hooks/useStream';
@@ -33,7 +34,7 @@ export function StrategyLabPanel({
     setBusy(true);
     onApply(draft);
     try {
-      await fetch(`${API_BASE}/api/v1/params`, {
+      const res = await fetch(`${API_BASE}/api/v1/params`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -45,8 +46,11 @@ export function StrategyLabPanel({
           n_paths: Math.round(draft.n_paths),
         }),
       });
+      if (!res.ok) throw new Error(`${res.status}`);
+      notifications.show({ message: 'Parámetros aplicados', color: 'brand' });
     } catch {
-      /* Los parametros locales siguen activos aunque el backend rechace persistencia. */
+      // Los parámetros locales siguen activos aunque el backend rechace la persistencia.
+      notifications.show({ message: 'No se pudieron persistir los parámetros', color: 'red' });
     } finally {
       setBusy(false);
     }

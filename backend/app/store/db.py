@@ -7,8 +7,9 @@ a `:memory:` y no contaminar el archivo de producción.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from sqlalchemy import Column, Float, Integer, String, Text
+from sqlalchemy import Column, Float, Integer, String, Text, event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -116,16 +117,38 @@ class AppConfigRow(Base):
 # Factory de engine y sesión
 # ---------------------------------------------------------------------------
 
+def _set_sqlite_pragmas(dbapi_conn: Any, _record: Any) -> None:
+    """PRAGMAs por conexión (SQLite no los hereda del archivo, salvo journal_mode):
+
+    - `journal_mode=WAL`: lectores REST y el BatchWriter dejan de bloquearse mutuamente.
+    - `synchronous=NORMAL`: en WAL evita el fsync completo por transacción (durabilidad
+      suficiente para telemetría de simulación; NO es un ledger contable).
+    - `busy_timeout`: ante contención puntual, espera acotada en vez de `database is locked`.
+    - `auto_vacuum=INCREMENTAL`: permite liberar espacio tras la poda sin el coste de un
+      VACUUM completo. En un archivo preexistente queda latente hasta el primer VACUUM.
+    """
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA auto_vacuum=INCREMENTAL")
+    cursor.close()
+
+
 def make_engine(db_url: str) -> AsyncEngine:
     """Crea el engine async. `check_same_thread=False` necesario para SQLite."""
     connect_args = {}
-    if "sqlite" in db_url:
+    is_sqlite = "sqlite" in db_url
+    if is_sqlite:
         connect_args["check_same_thread"] = False
-    return create_async_engine(
+    engine = create_async_engine(
         db_url,
         connect_args=connect_args,
         echo=False,
     )
+    if is_sqlite:
+        event.listen(engine.sync_engine, "connect", _set_sqlite_pragmas)
+    return engine
 
 
 def make_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

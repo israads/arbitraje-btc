@@ -367,12 +367,14 @@ def create_app() -> FastAPI:
             {"name": "sistema", "description": "Salud, métricas e información del servicio."},
         ],
     )
+    # CORS mínimo necesario: la auth es por header (X-Control-Token / X-API-Key), no por
+    # cookies → `allow_credentials=False` (True ampliaría la superficie sin ningún uso real).
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Control-Token", "X-API-Key"],
     )
     # Protecciones opcionales de API (default OFF): se montan solo si están configuradas.
     if settings.api_key or settings.api_rate_limit_per_min > 0:

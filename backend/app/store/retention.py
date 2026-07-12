@@ -166,11 +166,19 @@ async def prune_old_rows(
                     {"cutoff": cutoff},
                 )
                 deleted[table] = res.rowcount or 0
-        if vacuum and (deleted["opportunities"] or deleted["executions"]):
-            # VACUUM recupera espacio en disco; fuera de transacción y costoso → opt-in.
-            async with engine.connect() as conn:
-                await conn.execute(text("VACUUM"))
         if deleted["opportunities"] or deleted["executions"]:
+            if vacuum:
+                # VACUUM recupera TODO el espacio en disco; costoso y bloquea → opt-in.
+                async with engine.connect() as conn:
+                    await conn.execute(text("VACUUM"))
+            else:
+                # Con `auto_vacuum=INCREMENTAL` (ver store/db.py) libera las páginas del
+                # freelist sin el coste/bloqueo del VACUUM completo. Sin DELETE previo el
+                # archivo NO crece; el propio DELETE ya deja páginas reutilizables — esto
+                # las devuelve al SO para que el tamaño en disco siga a la retención real.
+                # No-op inofensivo si auto_vacuum aún no está activo (archivo pre-migración).
+                async with engine.connect() as conn:
+                    await conn.execute(text("PRAGMA incremental_vacuum"))
             log.info(
                 "poda: -%d opportunities, -%d executions (retención %.1fh)",
                 deleted["opportunities"], deleted["executions"], retention_hours,

@@ -368,8 +368,8 @@ export function OpportunityExplainDrawer({
 
           <Box>
             <SectionHeader
-              title="Testnet preflight"
-              subtitle="Binance Spot Testnet"
+              title="Preflight de ejecución"
+              subtitle="Dry-run local (determinista, sin red)"
               icon={<IconShieldCheck size={18} />}
               right={
                 <Badge

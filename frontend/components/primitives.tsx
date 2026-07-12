@@ -1,6 +1,6 @@
 'use client';
 
-import { Box, Card, Group, Text, ThemeIcon, Title } from '@mantine/core';
+import { Box, Button, Card, Group, Text, ThemeIcon, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { InfoHint } from './InfoHint';
 
@@ -92,6 +92,40 @@ export function SectionHeader({
         </Box>
       </Group>
       {right}
+    </Group>
+  );
+}
+
+/**
+ * Estado de fetch en el cuerpo de un panel: distingue "cargando" (dato aún null, sin fallo)
+ * de "error" (el fetch falló) — evita el "Cargando…" eterno cuando el backend no responde.
+ */
+export function FetchFallback({
+  error,
+  onRetry,
+  loading,
+}: {
+  error: boolean;
+  onRetry?: () => void;
+  loading: string;
+}) {
+  if (!error) {
+    return (
+      <Text size="sm" c="dimmed">
+        {loading}
+      </Text>
+    );
+  }
+  return (
+    <Group gap="sm">
+      <Text size="sm" c="red.4">
+        No se pudo cargar.
+      </Text>
+      {onRetry && (
+        <Button size="compact-xs" variant="light" color="gray" onClick={onRetry}>
+          Reintentar
+        </Button>
+      )}
     </Group>
   );
 }

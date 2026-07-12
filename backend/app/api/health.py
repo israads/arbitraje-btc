@@ -4,6 +4,7 @@ Estado de feeds/conexiones/breakers se irá enriqueciendo en STORY-014/018.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, cast
 
@@ -13,6 +14,18 @@ from ..models.enums import ConnectionStatus
 from ..risk.watchdog import is_stale
 
 router = APIRouter(tags=["ops"])
+
+
+def _task_status(task: asyncio.Task[Any]) -> str:
+    """Estado observable de una task del pipeline: `running`/`cancelled`/`failed`/`finished`.
+
+    `failed` = terminó con excepción no cancelada → el subsistema murió y nadie lo reiniciará
+    (NFR-008: un jurado/monitor debe poder detectarlo en /health, no en los logs)."""
+    if not task.done():
+        return "running"
+    if task.cancelled():
+        return "cancelled"
+    return "failed" if task.exception() is not None else "finished"
 
 
 def _operational_mode(ctx: Any) -> str:
@@ -70,8 +83,15 @@ async def health(request: Request) -> dict[str, Any]:
             entry["usd_ask"] = nb.best_ask
         feeds[ex] = entry
 
+    # Liveness de las tasks del pipeline (feeds/engine/watchdog/breakers/…): una task muerta
+    # degrada el estado global — el proceso responde pero el subsistema ya no trabaja.
+    tasks = {t.get_name(): _task_status(t) for t in ctx.tasks}
+    if ctx.writer is not None:
+        tasks["writer"] = "running" if ctx.writer.is_alive() else "failed"
+    degraded = any(st == "failed" for st in tasks.values())
+
     return {
-        "status": "ok",
+        "status": "degraded" if degraded else "ok",
         "app": s.app_name,
         "env": s.env,
         "version": request.app.version,
@@ -88,6 +108,7 @@ async def health(request: Request) -> dict[str, Any]:
             if ctx.breakers
             else {"halted": False, "active": [], "breakers": []}
         ),
+        "tasks": tasks,
         "funnel": ctx.opp_counts,
         "recent_opps": len(ctx.recent_opps),
         "sse_clients": ctx.hub.client_count,

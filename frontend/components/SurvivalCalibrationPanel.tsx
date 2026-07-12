@@ -3,7 +3,7 @@
 import { Badge, Box, Card, Group, Progress, SimpleGrid, Text, Tooltip } from '@mantine/core';
 import { IconAdjustmentsCheck } from '@tabler/icons-react';
 import type { SurvivalCalibration } from '../hooks/useStream';
-import { SectionHeader } from './primitives';
+import { FetchFallback, SectionHeader } from './primitives';
 
 function pct(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
@@ -16,7 +16,15 @@ function confidenceColor(c: string): string {
   return 'gray';
 }
 
-export function SurvivalCalibrationPanel({ report }: { report: SurvivalCalibration | null }) {
+export function SurvivalCalibrationPanel({
+  report,
+  error = false,
+  onRetry,
+}: {
+  report: SurvivalCalibration | null;
+  error?: boolean;
+  onRetry?: () => void;
+}) {
   if (!report) {
     return (
       <Card h="100%">
@@ -25,7 +33,7 @@ export function SurvivalCalibrationPanel({ report }: { report: SurvivalCalibrati
           subtitle="estimado vs observado · shadow replay"
           icon={<IconAdjustmentsCheck size={18} />}
         />
-        <Text size="sm" c="dimmed">Midiendo supervivencia observe-only…</Text>
+        <FetchFallback error={error} onRetry={onRetry} loading="Midiendo supervivencia observe-only…" />
       </Card>
     );
   }

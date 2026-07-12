@@ -3,7 +3,7 @@
 import { Badge, Box, Card, Group, Text } from '@mantine/core';
 import { IconChartArea } from '@tabler/icons-react';
 import type { EdgeCapacity } from '../hooks/useStream';
-import { SectionHeader } from './primitives';
+import { FetchFallback, SectionHeader } from './primitives';
 
 /**
  * Projection Suite v2 — Capa 2: Capacity Curve. Edge neto TOTAL ($) vs capital desplegado Q (BTC):
@@ -21,7 +21,15 @@ const POS = '#2fd98c';
 const NEG = '#f6678a';
 const BRAND = '#16D67F';
 
-export function CapacityCurve({ capacity }: { capacity: EdgeCapacity | null }) {
+export function CapacityCurve({
+  capacity,
+  error = false,
+  onRetry,
+}: {
+  capacity: EdgeCapacity | null;
+  error?: boolean;
+  onRetry?: () => void;
+}) {
   const header = (
     <SectionHeader
       title="Capacity Curve"
@@ -44,7 +52,11 @@ export function CapacityCurve({ capacity }: { capacity: EdgeCapacity | null }) {
     return (
       <Card h="100%">
         {header}
-        <Text size="sm" c="dimmed">Proyectando capacidad…</Text>
+        {!capacity ? (
+          <FetchFallback error={error} onRetry={onRetry} loading="Proyectando capacidad…" />
+        ) : (
+          <Text size="sm" c="dimmed">Sin puntos suficientes para trazar la curva.</Text>
+        )}
       </Card>
     );
   }
@@ -72,7 +84,13 @@ export function CapacityCurve({ capacity }: { capacity: EdgeCapacity | null }) {
     <Card h="100%">
       {header}
       <Box style={{ overflowX: 'auto' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 360 }} role="img">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          width="100%"
+          style={{ minWidth: 360 }}
+          role="img"
+          aria-label={`Curva de capacidad: edge total en dólares frente a capital desplegado de ${qMin.toFixed(2)} a ${qMax.toFixed(2)} BTC a ${capacity.fee_bps.toFixed(1)} bps.${capacity.q_star_btc != null ? ` Óptimo Q* en ${capacity.q_star_btc.toFixed(2)} BTC con ${(capacity.q_star_edge_usd ?? 0).toFixed(1)} dólares por oportunidad.` : ''}${capacity.hard_capacity_btc != null ? ` Capacidad dura: ${capacity.hard_capacity_btc.toFixed(2)} BTC.` : ''}`}
+        >
           {/* eje cero */}
           <line x1={PAD.l} y1={zeroY} x2={W - PAD.r} y2={zeroY} stroke="rgba(255,255,255,0.18)" strokeDasharray="3 3" />
           {/* área + línea de edge total */}
@@ -90,9 +108,9 @@ export function CapacityCurve({ capacity }: { capacity: EdgeCapacity | null }) {
             </>
           )}
           {/* etiquetas de ejes */}
-          <text x={PAD.l} y={H - 8} fontSize="9" fill="rgba(255,255,255,0.4)">{qMin.toFixed(2)} BTC</text>
-          <text x={W - PAD.r} y={H - 8} fontSize="9" fill="rgba(255,255,255,0.4)" textAnchor="end">{qMax.toFixed(2)} BTC</text>
-          <text x={6} y={PAD.t + 8} fontSize="9" fill="rgba(255,255,255,0.4)">${eMax.toFixed(0)}</text>
+          <text x={PAD.l} y={H - 8} fontSize="9" fill="rgba(255,255,255,0.62)">{qMin.toFixed(2)} BTC</text>
+          <text x={W - PAD.r} y={H - 8} fontSize="9" fill="rgba(255,255,255,0.62)" textAnchor="end">{qMax.toFixed(2)} BTC</text>
+          <text x={6} y={PAD.t + 8} fontSize="9" fill="rgba(255,255,255,0.62)">${eMax.toFixed(0)}</text>
         </svg>
       </Box>
 

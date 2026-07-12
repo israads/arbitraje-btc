@@ -1,6 +1,7 @@
 'use client';
 
 import { Badge, Button, Card, Group, SegmentedControl, Stack, Text } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle, IconBolt, IconDownload, IconPlayerPlay, IconShieldHalf } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { API_BASE } from '../lib/config';
@@ -40,13 +41,17 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
       .catch(() => undefined);
   }, []);
 
-  const post = async (path: string) => {
+  // okMsg: toast de éxito (sólo acciones críticas); errMsg: toast de error siempre.
+  const post = async (path: string, okMsg?: string, errMsg = 'No se pudo aplicar la acción') => {
     if (busy) return; // evita acciones solapadas (doble-click / cambio rápido de modo)
     setBusy(true);
     try {
-      await fetch(`${API_BASE}/api/v1/${path}`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/v1/${path}`, { method: 'POST' });
+      if (!res.ok) throw new Error(`${res.status}`);
+      if (okMsg) notifications.show({ message: okMsg, color: 'brand' });
     } catch {
-      /* el estado real llega por SSE/polling; un fallo de red no rompe la UI */
+      // El estado real llega por SSE/polling, pero el operador debe ENTERARSE del fallo.
+      notifications.show({ message: errMsg, color: 'red' });
     } finally {
       setBusy(false);
     }
@@ -57,7 +62,7 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
     setBusy(true);
     try {
       const res = await fetch(`${API_BASE}/api/v1/session/export`);
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`${res.status}`);
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -69,8 +74,9 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      notifications.show({ message: 'Sesión exportada', color: 'brand' });
     } catch {
-      /* el export es auxiliar; si falla no bloquea la operación */
+      notifications.show({ message: 'No se pudo exportar la sesión', color: 'red' });
     } finally {
       setBusy(false);
     }
@@ -96,7 +102,9 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
             variant="filled"
             leftSection={<IconBolt size={16} />}
             loading={busy}
-            onClick={() => post('control/kill-switch')}
+            onClick={() =>
+              post('control/kill-switch', 'Kill switch activado', 'No se pudo activar el kill switch')
+            }
             aria-label="Kill switch: detener inmediatamente toda operación del bot"
           >
             Kill switch
@@ -106,7 +114,9 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
             variant="light"
             leftSection={<IconPlayerPlay size={16} />}
             loading={busy}
-            onClick={() => post('control/resume')}
+            onClick={() =>
+              post('control/resume', 'Operación reanudada', 'No se pudo reanudar la operación')
+            }
             aria-label="Reanudar la operación tras un halt"
           >
             Resume
