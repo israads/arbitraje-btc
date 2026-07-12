@@ -3,6 +3,7 @@
 # Acceso: http://159.89.187.165:8090
 #
 # Build context = raiz del repo (../..), porque los Dockerfile copian backend/ y frontend/.
+# Compose CANÓNICO del deploy (AD-3, PRD-011): volumen persistente + healthcheck como gate.
 
 name: arbitraje-btc
 
@@ -13,13 +14,33 @@ services:
       dockerfile: deploy/Dockerfile
     image: arbitraje-btc-backend
     environment:
-      - ARB_ENV=prod
+      ARB_ENV: prod
       # Obligatorio (sin default vacío): este stack es público — sin token, el kill-switch,
       # la purga de BD y la config quedarían abiertos a Internet. El backend además se niega
       # a arrancar con ARB_ENV=prod y token vacío (ver backend/app/config.py).
-      - ARB_CONTROL_TOKEN=${ARB_CONTROL_TOKEN:?define ARB_CONTROL_TOKEN (p.ej. openssl rand -hex 24)}
+      ARB_CONTROL_TOKEN: ${ARB_CONTROL_TOKEN:?define ARB_CONTROL_TOKEN (p.ej. openssl rand -hex 24)}
+      # SQLite en el volumen (RF-001). CUATRO barras = ruta absoluta /data/arbitraje.db;
+      # DB + sidecars -wal/-shm viven en /data, nunca en la capa escribible de /app.
+      ARB_DB_URL: sqlite+aiosqlite:////data/arbitraje.db
+    volumes:
+      - arb-data:/data
     expose:
       - "8000"
+    # Gate de arranque (RF-005): parsea el BODY (status=="ok"), no solo HTTP 200 — /health
+    # devuelve 200 también degradado. Sin curl/jq en la imagen: python stdlib.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json,sys,urllib.request;
+          data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=5));
+          sys.exit(0 if data.get('status')=='ok' else 1)
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 30s
     restart: unless-stopped
     networks:
       - arb-net
@@ -33,11 +54,7 @@ services:
         # Dockerfile: si alguien borra esta línea, el build sigue siendo read-only.
         NEXT_PUBLIC_READ_ONLY: "1"
     image: arbitraje-btc-frontend
-    # `next start` ignora la env HOSTNAME (solo aplica al modo standalone) y bindea a
-    # localhost, quedando inalcanzable desde nginx. El flag -H 0.0.0.0 si surte efecto.
-    # Puerto 3100 (NO 3000): Easy Panel tiene una regla iptables DOCKER-USER que DROPea
-    # todo el trafico al :3000 entre contenedores salvo desde localhost.
-    command: ["npx", "next", "start", "-H", "0.0.0.0", "-p", "3100"]
+    # Puerto y comando viven en el Dockerfile (RF-011): una sola autoridad del 3100.
     expose:
       - "3100"
     restart: unless-stopped
@@ -45,14 +62,18 @@ services:
       - arb-net
 
   nginx:
-    image: nginx:alpine
+    # Digest multi-arch resuelto el 2026-07-11 (RF-013).
+    image: nginx:alpine@sha256:54f2a904c251d5a34adf545a72d32515a15e08418dae0266e23be2e18c66fefa
     ports:
       - "8090:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - backend
-      - frontend
+      backend:
+        # nginx no avanza hasta que /health reporte status=ok (RF-005).
+        condition: service_healthy
+      frontend:
+        condition: service_started
     restart: unless-stopped
     networks:
       - arb-net
@@ -60,3 +81,8 @@ services:
 networks:
   arb-net:
     driver: bridge
+
+volumes:
+  # Persistencia SQLite (RF-001). PROHIBIDO `docker compose down -v` en runbooks:
+  # borra este volumen y con él la sesión canónica.
+  arb-data:

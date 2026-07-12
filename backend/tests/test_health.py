@@ -16,6 +16,81 @@ def test_health_ok(client):
     assert body["control_token_required"] is False
 
 
+class _StubTask:
+    """Duck-type mínimo de asyncio.Task para _task_status: done/cancelled/exception/get_name."""
+
+    def __init__(self, name: str, state: str):
+        self._name = name
+        self._state = state
+
+    def get_name(self) -> str:
+        return self._name
+
+    def done(self) -> bool:
+        return self._state != "running"
+
+    def cancelled(self) -> bool:
+        return self._state == "cancelled"
+
+    def exception(self) -> BaseException | None:
+        return RuntimeError("boom") if self._state == "failed" else None
+
+
+def _health_with_task(client, state: str) -> dict:
+    ctx = client.app.state.ctx
+    stub = _StubTask(f"stub_{state}", state)
+    ctx.tasks.append(stub)
+    try:
+        return client.get("/health").json()
+    finally:
+        ctx.tasks.remove(stub)
+
+
+def test_health_degrades_on_failed_task(client):
+    """RF-004: task con excepción → degraded (caso ya cubierto antes del PRD-011)."""
+    body = _health_with_task(client, "failed")
+    assert body["status"] == "degraded"
+    assert body["tasks"]["stub_failed"] == "failed"
+
+
+def test_health_degrades_on_finished_task(client):
+    """RF-004: una task que retornó (p.ej. feeds con TODOS los runners muertos) ya no
+    trabaja — `finished` NO es benigno, degrada mientras el endpoint siga sirviendo."""
+    body = _health_with_task(client, "finished")
+    assert body["status"] == "degraded"
+    assert body["tasks"]["stub_finished"] == "finished"
+
+
+def test_health_degrades_on_cancelled_task(client):
+    """RF-004: cancelación (shutdown en curso) degrada cualquier respuesta aún en vuelo."""
+    body = _health_with_task(client, "cancelled")
+    assert body["status"] == "degraded"
+    assert body["tasks"]["stub_cancelled"] == "cancelled"
+
+
+def test_health_degrades_on_dead_writer(client):
+    """RF-004: writer muerto con tasks sanas → degraded (la persistencia dejó de escribir)."""
+    ctx = client.app.state.ctx
+    original = ctx.writer.is_alive
+    ctx.writer.is_alive = lambda: False  # type: ignore[method-assign]
+    try:
+        body = client.get("/health").json()
+    finally:
+        ctx.writer.is_alive = original  # type: ignore[method-assign]
+    assert body["status"] == "degraded"
+    assert body["tasks"]["writer"] == "failed"
+
+
+def test_health_ok_with_running_tasks_and_live_writer(client):
+    """Caso sano explícito: tasks running + writer vivo → ok, con detalle por nombre."""
+    body = _health_with_task(client, "running")
+    assert body["status"] == "ok"
+    assert body["tasks"]["stub_running"] == "running"
+    assert body["tasks"]["writer"] == "running"
+    # db_retention corre con el default de 24 h incluso con autostart off (main.py).
+    assert body["tasks"]["db_retention"] == "running"
+
+
 def test_stream_route_registered(client):
     """El endpoint SSE (C11) está registrado. El test de streaming en vivo
     (publicar/consumir eventos) es de STORY-005, donde se cablea el pipeline."""

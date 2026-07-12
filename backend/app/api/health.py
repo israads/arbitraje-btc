@@ -88,7 +88,13 @@ async def health(request: Request) -> dict[str, Any]:
     tasks = {t.get_name(): _task_status(t) for t in ctx.tasks}
     if ctx.writer is not None:
         tasks["writer"] = "running" if ctx.writer.is_alive() else "failed"
-    degraded = any(st == "failed" for st in tasks.values())
+    # RF-004 (PRD-011): CUALQUIER estado terminal degrada, no solo `failed`. Las tasks del
+    # pipeline son bucles sin salida normal: `finished`/`cancelled` significan subsistema
+    # muerto (p.ej. feeds retorna si TODOS los runners caen). No hay excepción de shutdown:
+    # la cancelación ocurre en el finally del lifespan, cuando uvicorn ya no acepta
+    # conexiones nuevas — una respuesta en vuelo que observe `cancelled` degrada bien y
+    # después el proceso simplemente deja de responder (shutdown limpio = sin /health).
+    degraded = any(st != "running" for st in tasks.values())
 
     return {
         "status": "degraded" if degraded else "ok",

@@ -13,10 +13,18 @@ services:
       # público debe quedar detrás de un proxy (nginx) que termine TLS — nunca expuesto directo.
       - "127.0.0.1:8000:8000"
     environment:
-      - ARB_ENV=prod
+      ARB_ENV: prod
       # Obligatorio: con ARB_ENV=prod el backend se niega a arrancar sin token de control
       # (ver backend/app/config.py). Exporta uno antes: openssl rand -hex 24
-      - ARB_CONTROL_TOKEN=${ARB_CONTROL_TOKEN:?define ARB_CONTROL_TOKEN (p.ej. openssl rand -hex 24)}
+      ARB_CONTROL_TOKEN: ${ARB_CONTROL_TOKEN:?define ARB_CONTROL_TOKEN (p.ej. openssl rand -hex 24)}
+      # Mismo par volumen/URL que el compose canónico (RF-001): el Dockerfile compartido
+      # crea /data con ownership 10001; sin esto la DB caería en la capa efímera de /app.
+      ARB_DB_URL: sqlite+aiosqlite:////data/arbitraje.db
+    volumes:
+      - arb-data:/data
     # Para overrides desde archivo, crea backend/.env y descomenta:
     # env_file:
     #   - ../backend/.env
+
+volumes:
+  arb-data:

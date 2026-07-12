@@ -126,12 +126,18 @@ def _set_sqlite_pragmas(dbapi_conn: Any, _record: Any) -> None:
     - `busy_timeout`: ante contención puntual, espera acotada en vez de `database is locked`.
     - `auto_vacuum=INCREMENTAL`: permite liberar espacio tras la poda sin el coste de un
       VACUUM completo. En un archivo preexistente queda latente hasta el primer VACUUM.
+
+    ORDEN CRÍTICO: `auto_vacuum` debe ejecutarse ANTES que `journal_mode=WAL`. Cambiar a
+    WAL inicializa la página 1 de un archivo nuevo, y con la página 1 escrita SQLite ya
+    no acepta cambios de auto_vacuum sin un VACUUM — con el orden invertido, hasta una DB
+    recién creada quedaba en auto_vacuum=0 y `PRAGMA incremental_vacuum` (retention.py)
+    era un no-op silencioso: la poda nunca liberaba espacio (verificado en runtime docker).
     """
     cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA auto_vacuum=INCREMENTAL")
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA busy_timeout=5000")
-    cursor.execute("PRAGMA auto_vacuum=INCREMENTAL")
     cursor.close()
 
 

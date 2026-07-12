@@ -1,6 +1,9 @@
 # Frontend Next.js para despliegue standalone tras nginx (mismo origen).
 # NEXT_PUBLIC_API_BASE="" ⇒ el cliente usa rutas relativas (/api, /health).
-FROM node:20-slim
+#
+# Base fijada por digest (RF-013, PRD-011). Índice multi-arch resuelto el 2026-07-11:
+#   node:20-slim → sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
 
 WORKDIR /app
 
@@ -31,5 +34,9 @@ RUN if [ "$NEXT_PUBLIC_READ_ONLY" = "1" ]; then \
 RUN chown -R node:node /app/.next
 USER node
 
-EXPOSE 3000
-CMD ["npm", "run", "start"]
+# Única autoridad de puerto (RF-011): 3100 aquí, sin `command` duplicado en compose.
+# -H 0.0.0.0: `next start` ignora la env HOSTNAME (solo aplica al modo standalone) y
+# bindearía a localhost, quedando inalcanzable desde nginx. 3100 y NO 3000: Easy Panel
+# tiene una regla iptables DOCKER-USER que DROPea el tráfico al :3000 entre contenedores.
+EXPOSE 3100
+CMD ["npx", "next", "start", "-H", "0.0.0.0", "-p", "3100"]
