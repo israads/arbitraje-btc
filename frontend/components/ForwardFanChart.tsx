@@ -57,10 +57,19 @@ export function ForwardFanChart({
       help="Simula miles de futuros posibles remuestreando la serie real de P&L de la sesión. Las bandas (P5–P95) muestran el rango probable; no es una predicción, es la dispersión consistente con los datos. Incluye prob. de ganancia, de ruina y Sharpe/PSR (si el rendimiento es real o suerte)."
       icon={<IconChartLine size={18} />}
       right={
-        forward?.available ? (
-          <Badge variant="light" color="gray" tt="none">
-            {forward.n_paths.toLocaleString('en-US')} paths · {forward.n_trades} trades
-          </Badge>
+        forward ? (
+          <Group gap={6} wrap="wrap" justify="flex-end">
+            {/* RF-003 (PRD-014): origen fijo por la implementación de GET /api/v1/forward
+                (ticks del Recorder reproducidos en backtest); nunca "live". */}
+            <Badge variant="light" color="gray" tt="none">
+              RECORDING → REPLAY
+            </Badge>
+            {forward.available ? (
+              <Badge variant="light" color="gray" tt="none">
+                {forward.n_paths.toLocaleString('en-US')} paths · {forward.n_trades} trades
+              </Badge>
+            ) : null}
+          </Group>
         ) : null
       }
     />

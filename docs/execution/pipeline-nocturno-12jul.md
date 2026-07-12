@@ -52,7 +52,9 @@
 - Parte 2 (PRD-010): ✅ CERRADA — commit 3a589f3. Ciclo Codex(APROBADO)→Claude(sin correcciones)→Codex(APROBADO). Gate acumulado verde.
 - Parte 3 (PRD-011): ✅ CERRADA — commits 44a12e1 (producto) + 82a21a7 (deps §13 aislado). Ciclo Codex(APROBADO)→Claude(BUG REAL corregido: orden de PRAGMAs auto_vacuum/WAL en db.py; runtime Docker verificado con healthy+UID10001+WAL+av=2+persistencia tras restart)→Codex(APROBADO). §13: PARCHES INTEGRADOS sin excepción.
 - Parte 4: ✅ VERDE — gate preliminar sobre 82a21a7 desde worktree limpio: backend 532/91.51%, frontend ambos builds 264 kB, compose config+build OK. Sin tag (correcto).
-- Parte 5 (PRD-012): implementada verde (533 tests; fix epoch en capa impura; /balances en pullLight con guards; InventoryPanel con 5 estados). Ciclo de revisión en curso.
+- Parte 5 (PRD-012): ✅ CERRADA — commit 25e0780. Ciclo Codex(CORREGIDO guards/responsive)→Claude(contratos+runtime jury verificados, sin correcciones)→Codex(APROBADO). 533 tests.
+- Parte 6 (PRD-013): ✅ CERRADA — commit f4d75e2 (+d8aae67 excluye sidecars WAL/SHM colados). Ciclo Codex(CORREGIDO: 2 carreras reales — publicar demo antes de books, baseline monotónica)→Claude(SSE runtime verificado en vivo, +1 test)→Codex(CORREGIDO estados literales). 546 tests/91.64%. order_failure reformulado honesto (RF-003B).
+- Parte 7 (PRD-014): implementación en curso.
 
 ## Registro
 

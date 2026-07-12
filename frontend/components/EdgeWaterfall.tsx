@@ -76,21 +76,33 @@ export function EdgeWaterfall({
         subtitle="reconciliación del reto · prueba de correctitud"
         icon={<IconRosetteDiscountCheck size={18} />}
         right={
-          <Tooltip
-            label={`computado ${money(rec.computed)} vs objetivo ${money(rec.target)} (Δ ${rec.diff.toFixed(4)})`}
-            withArrow
-            multiline
-            w={260}
-          >
-            <Badge
-              size="lg"
-              variant="light"
-              color={passed ? 'brand' : 'red'}
-              leftSection={passed ? <IconCheck size={13} /> : <IconX size={13} />}
+          <Group gap={6} wrap="wrap" justify="flex-end">
+            <Tooltip
+              label={`computado ${money(rec.computed)} vs objetivo ${money(rec.target)} (Δ ${rec.diff.toFixed(4)})`}
+              withArrow
+              multiline
+              w={260}
             >
-              {money(rec.computed)}/BTC
-            </Badge>
-          </Tooltip>
+              <Badge
+                size="lg"
+                variant="light"
+                color={passed ? 'brand' : 'red'}
+                leftSection={passed ? <IconCheck size={13} /> : <IconX size={13} />}
+              >
+                {money(rec.computed)}/BTC
+              </Badge>
+            </Tooltip>
+            <Tooltip
+              label="Fixture determinista del enunciado, reconciliado con la misma cost_model; no es edge live ni usa la configuración actual"
+              withArrow
+              multiline
+              w={280}
+            >
+              <Badge size="lg" variant="default" color="gray" tt="none">
+                CASO CANÓNICO
+              </Badge>
+            </Tooltip>
+          </Group>
         }
       />
 

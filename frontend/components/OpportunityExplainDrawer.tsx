@@ -356,6 +356,11 @@ export function OpportunityExplainDrawer({
             <Text size="xs" c="dimmed" tt="uppercase" fw={700} mb={6}>
               Decisión
             </Text>
+            {/* RF-004 (PRD-014): veredicto literal del motor. Única fuente: engine.trades
+                (misma que el badge operable/rechazada); el color es refuerzo, no portador. */}
+            <Text fw={700} fz={20} lh={1.2} mb={6} c={data.engine.trades ? 'brand.4' : 'red.4'}>
+              {data.engine.trades ? 'OPERAR' : 'NO OPERAR'}
+            </Text>
             <Group gap="xs">
               <Badge color={data.engine.trades ? 'brand' : 'gray'} variant="dot" tt="none">
                 {data.engine.trades ? 'operable' : 'rechazada'}

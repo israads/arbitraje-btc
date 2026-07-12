@@ -334,7 +334,7 @@ export default function DashboardPage() {
             <StatCard
               label="Equity"
               value={usd(pnl?.equity_usd)}
-              accent="brand"
+              accent="neutral"
               icon={<IconWallet size={18} />}
               sub="capital simulado total"
               hint="Capital total simulado: efectivo + valor de BTC en todos los venues. Es el tamaño de la cuenta del bot."

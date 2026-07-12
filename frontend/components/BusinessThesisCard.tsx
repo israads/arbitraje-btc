@@ -1,6 +1,7 @@
 'use client';
 
-import { Box, Button, Card, SimpleGrid, Text } from '@mantine/core';
+import { Badge, Box, Button, Card, Group, SimpleGrid, Text } from '@mantine/core';
+import type { ReactNode } from 'react';
 import { IconArrowRight, IconBulb } from '@tabler/icons-react';
 import type { EdgeFrontier, ForwardProjection } from '../hooks/useStream';
 import { FetchFallback, NEG, POS, SectionHeader } from './primitives';
@@ -39,6 +40,7 @@ function bestOfRow(row: (number | null)[] | undefined): number | null {
 
 function ThesisBlock({
   label,
+  meta,
   value,
   valueColor,
   sub,
@@ -46,6 +48,8 @@ function ThesisBlock({
   onClick,
 }: {
   label: string;
+  /** Metadatos de origen (modo/ruta o muestra): debajo del label, antes de la cifra. */
+  meta?: ReactNode;
   value: string;
   valueColor: string;
   sub: string;
@@ -66,6 +70,11 @@ function ThesisBlock({
       <Text size="xs" tt="uppercase" fw={700} c="dimmed" style={{ fontSize: 10, letterSpacing: 0.3 }}>
         {label}
       </Text>
+      {meta ? (
+        <Group gap={4} wrap="wrap" mt={4}>
+          {meta}
+        </Group>
+      ) : null}
       <Text ff="monospace" className="mono-nums" fw={700} fz={24} lh={1.15} mt={4} style={{ color: valueColor }}>
         {value}
       </Text>
@@ -107,7 +116,7 @@ export function BusinessThesisCard({
       title="Tesis de negocio"
       subtitle="dónde sí hay negocio — y dónde no"
       icon={<IconBulb size={18} />}
-      help="Entre exchanges grandes BTC es demasiado eficiente: un spread bruto positivo se vuelve negativo tras peg y fees a comisión retail. El negocio aparece con fees institucionales (mismo trade, comisiones negociadas) y en corredores regionales como MXN. Y la honestidad: medimos capturabilidad con datos vivos, no prometemos retorno. Cada número de esta tarjeta sale de los paneles de Proyección."
+      help="Entre exchanges grandes BTC es demasiado eficiente: un spread bruto positivo se vuelve negativo tras peg y fees a comisión retail. El negocio aparece con fees institucionales (mismo trade, comisiones negociadas) y en corredores regionales como MXN. Y la honestidad: cada número declara su modo y su panel fuente; las proyecciones pueden caer a demo. Medimos capturabilidad, no prometemos retorno."
     />
   );
 
@@ -122,6 +131,44 @@ export function BusinessThesisCard({
   const goFrontier = () => onNavigate('proyeccion', 'tour-frontier');
   const goForward = () => onNavigate('proyeccion', 'tour-forward');
 
+  // RF-002: origen del frontier — modo textual (DEMO/LIVE) y ruta buy→sell si existe.
+  // Un payload parcial no debe convertir la ausencia de metadatos en una etiqueta inventada.
+  const frontierMode = frontier?.mode?.toUpperCase();
+  const frontierRoute = frontier?.route;
+  const frontierMeta = frontierMode || frontierRoute ? (
+    <>
+      {frontierMode ? (
+        <Badge size="xs" variant="light" color={frontier?.mode === 'live' ? 'brand' : 'gray'} tt="none">
+          {frontierMode}
+        </Badge>
+      ) : null}
+      {frontierRoute ? (
+        <Badge size="xs" variant="default" color="gray" tt="none">
+          {frontierRoute.buy}→{frontierRoute.sell}
+        </Badge>
+      ) : null}
+    </>
+  ) : null;
+
+  // RF-003: origen fijo del forward (invariancia de GET /api/v1/forward: ticks del Recorder
+  // reproducidos en backtest; nunca "live") + muestra empírica/simulada.
+  const forwardOriginBadge = (
+    <Badge size="xs" variant="light" color="gray" tt="none">
+      RECORDING → REPLAY
+    </Badge>
+  );
+  const forwardMeta = forward?.available ? (
+    <>
+      {forwardOriginBadge}
+      <Badge size="xs" variant="default" color="gray" tt="none">
+        {forward.n_trades} trades empíricos
+      </Badge>
+      <Badge size="xs" variant="default" color="gray" tt="none">
+        {forward.n_paths.toLocaleString('en-US')} trayectorias simuladas
+      </Badge>
+    </>
+  ) : null;
+
   return (
     <Card>
       {header}
@@ -129,6 +176,7 @@ export function BusinessThesisCard({
         {retailTier && retailNet != null ? (
           <ThesisBlock
             label={`Retail · ${retailTier.bps.toFixed(1)} bps`}
+            meta={frontierMeta}
             value={`${money(retailNet)}/BTC`}
             valueColor={retailNet >= 0 ? POS : NEG}
             sub={
@@ -154,6 +202,7 @@ export function BusinessThesisCard({
         {bestCell ? (
           <ThesisBlock
             label={`Institucional · ${bestCell.fee_bps.toFixed(1)} bps`}
+            meta={frontierMeta}
             value={`${money(bestCell.net_per_btc)}/BTC`}
             valueColor={bestCell.net_per_btc >= 0 ? POS : NEG}
             sub={`El mismo trade con comisiones negociadas (${bestCell.size_btc} BTC @ ${bestCell.fee_bps.toFixed(1)} bps) ${
@@ -175,6 +224,7 @@ export function BusinessThesisCard({
         {forward && !forward.available ? (
           <ThesisBlock
             label="P(P&L>0) · forward"
+            meta={forwardOriginBadge}
             value="—"
             valueColor="var(--mantine-color-dimmed)"
             sub="Muestra insuficiente para proyectar: honestidad ante todo — sin trades suficientes no afirmamos retorno."
@@ -184,6 +234,7 @@ export function BusinessThesisCard({
         ) : probProfit != null ? (
           <ThesisBlock
             label="P(P&L>0) · forward"
+            meta={forwardMeta}
             value={`${(probProfit * 100).toFixed(0)}%`}
             valueColor={probProfit >= 0.5 ? POS : NEG}
             sub={`${(probProfit * 100).toFixed(0)}% de las trayectorias simuladas terminan en positivo (mediana ${
