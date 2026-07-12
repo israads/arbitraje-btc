@@ -44,3 +44,5 @@ Thumbs.db
 # Coverage artifacts
 .coverage
 htmlcov/
+*.db-wal
+*.db-shm
