@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Badge, Button, Card, Group, NumberInput, SimpleGrid, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconAdjustmentsHorizontal, IconRefresh, IconSettingsCheck } from '@tabler/icons-react';
-import { API_BASE } from '../lib/config';
+import { API_BASE, READ_ONLY } from '../lib/config';
 import type { StrategyLabParams } from '../hooks/useStream';
 import { SectionHeader } from './primitives';
 
@@ -31,8 +31,14 @@ export function StrategyLabPanel({
 
   const apply = async () => {
     if (busy) return;
+    onApply(draft); // what-if de sesión: el padre relanza los GET de proyección con el draft
+    if (READ_ONLY) {
+      // Read-only (PRD-010): el what-if vive en el estado de esta sesión del navegador;
+      // el PATCH protegido NO sale del navegador. Reset ya es 100 % local.
+      notifications.show({ message: 'What-if actualizado; no persiste', color: 'aqua' });
+      return;
+    }
     setBusy(true);
-    onApply(draft);
     try {
       const res = await fetch(`${API_BASE}/api/v1/params`, {
         method: 'PATCH',
@@ -46,11 +52,20 @@ export function StrategyLabPanel({
           n_paths: Math.round(draft.n_paths),
         }),
       });
+      if (res.status === 401) {
+        notifications.show({ message: 'Requiere token de control', color: 'yellow' });
+        return;
+      }
       if (!res.ok) throw new Error(`${res.status}`);
       notifications.show({ message: 'Parámetros aplicados', color: 'brand' });
-    } catch {
+    } catch (e) {
       // Los parámetros locales siguen activos aunque el backend rechace la persistencia.
-      notifications.show({ message: 'No se pudieron persistir los parámetros', color: 'red' });
+      // TypeError = fetch no llegó al backend (red); otro status ya lanzó Error arriba.
+      const msg =
+        e instanceof TypeError
+          ? 'Error de conexión con el backend'
+          : 'No se pudieron persistir los parámetros';
+      notifications.show({ message: msg, color: 'red' });
     } finally {
       setBusy(false);
     }
@@ -74,7 +89,12 @@ export function StrategyLabPanel({
       <SectionHeader
         title="Strategy Lab"
         icon={<IconAdjustmentsHorizontal size={18} />}
-        right={<Badge color="aqua" variant="light">WHAT-IF</Badge>}
+        right={
+          <Badge color="aqua" variant="light">
+            {/* En read-only, "local" = estado de esta sesión; los cálculos siguen siendo GET al backend. */}
+            {READ_ONLY ? 'WHAT-IF LOCAL · NO PERSISTE' : 'WHAT-IF'}
+          </Badge>
+        }
       />
 
       <Stack gap="sm">

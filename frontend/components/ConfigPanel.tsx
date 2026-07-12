@@ -7,8 +7,11 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconDeviceFloppy, IconSettings2, IconAlertTriangle } from '@tabler/icons-react';
-import { API_BASE } from '../lib/config';
+import { API_BASE, READ_ONLY } from '../lib/config';
 import { SectionHeader, VenueTag } from './primitives';
+
+// Texto literal exigido por PRD-010 para todo control deshabilitado en la demo pública.
+const RO_HINT = 'Demo pública read-only';
 
 /**
  * Panel de CONFIGURACIÓN BASE editable (no what-if): balances pre-posicionados por venue, fees
@@ -73,6 +76,8 @@ export function ConfigPanel() {
 
   const save = async () => {
     if (!cfg || busy) return;
+    // Read-only: el PUT protegido NO sale del navegador (el 401 no es el mecanismo de UX).
+    if (READ_ONLY) return;
     setBusy(true);
     try {
       // `enabled` NO se envía: no es editable en caliente (requiere reiniciar el servicio).
@@ -96,6 +101,11 @@ export function ConfigPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      if (r.status === 401) {
+        // Con token configurado, el backend responde 401 ANTES que el 409 de venues (PRD-010).
+        notifications.show({ message: 'Requiere token de control', color: 'yellow' });
+        return;
+      }
       if (r.status === 409) {
         // Rama específica del bloqueo de venues (PRD-009): mensaje del backend, no genérico.
         const body409 = await r.json().catch(() => null);
@@ -113,8 +123,13 @@ export function ConfigPanel() {
       setDirty(false);
       setSaved(true);
       notifications.show({ message: 'Configuración guardada', color: 'brand' });
-    } catch {
-      notifications.show({ message: 'No se pudo guardar la configuración', color: 'red' });
+    } catch (e) {
+      // TypeError = fetch no llegó al backend (red); otro status ya lanzó Error arriba.
+      const msg =
+        e instanceof TypeError
+          ? 'Error de conexión con el backend'
+          : 'No se pudo guardar la configuración';
+      notifications.show({ message: msg, color: 'red' });
     } finally {
       setBusy(false);
     }
@@ -184,6 +199,7 @@ export function ConfigPanel() {
                         max={100}
                         step={1}
                         decimalScale={2}
+                        disabled={READ_ONLY}
                         value={e.fee_bps}
                         onChange={(v) => patchVenue(venue, { fee_bps: num(v, e.fee_bps) })}
                         styles={{ input: { textAlign: 'right' } }}
@@ -195,6 +211,7 @@ export function ConfigPanel() {
                         min={0}
                         step={0.5}
                         decimalScale={4}
+                        disabled={READ_ONLY}
                         value={e.initial_btc}
                         onChange={(v) => patchVenue(venue, { initial_btc: num(v, e.initial_btc) })}
                         styles={{ input: { textAlign: 'right' } }}
@@ -206,6 +223,7 @@ export function ConfigPanel() {
                         min={0}
                         step={10_000}
                         thousandSeparator=","
+                        disabled={READ_ONLY}
                         value={e.initial_quote}
                         onChange={(v) => patchVenue(venue, { initial_quote: num(v, e.initial_quote) })}
                         styles={{ input: { textAlign: 'right' } }}
@@ -224,6 +242,7 @@ export function ConfigPanel() {
               min={0.00001}
               step={0.05}
               decimalScale={5}
+              disabled={READ_ONLY}
               value={cfg.default_trade_qty_btc}
               onChange={(v) => patchGlobal({ default_trade_qty_btc: num(v, cfg.default_trade_qty_btc) })}
               w={140}
@@ -233,6 +252,7 @@ export function ConfigPanel() {
               size="xs"
               step={1}
               decimalScale={2}
+              disabled={READ_ONLY}
               value={cfg.min_net_profit_usd}
               onChange={(v) => patchGlobal({ min_net_profit_usd: num(v, cfg.min_net_profit_usd) })}
               w={130}
@@ -244,6 +264,7 @@ export function ConfigPanel() {
               max={0.05}
               step={0.0005}
               decimalScale={4}
+              disabled={READ_ONLY}
               value={cfg.max_slippage}
               onChange={(v) => patchGlobal({ max_slippage: num(v, cfg.max_slippage) })}
               w={130}
@@ -272,12 +293,18 @@ export function ConfigPanel() {
             variant={dirty ? 'filled' : 'light'}
             leftSection={<IconDeviceFloppy size={15} />}
             loading={busy}
-            disabled={!dirty}
+            disabled={!dirty || READ_ONLY}
             onClick={save}
             style={{ alignSelf: 'flex-start' }}
+            aria-label={READ_ONLY ? `Guardar configuración base — ${RO_HINT}` : undefined}
           >
             Guardar configuración base
           </Button>
+          {READ_ONLY && (
+            <Text size="xs" c="dimmed" mt={4}>
+              {RO_HINT}: la configuración se muestra pero no es editable.
+            </Text>
+          )}
         </>
       )}
     </Card>

@@ -48,7 +48,8 @@
 
 ## Registro fase C
 
-- Parte 1 (PRD-009): implementada verde (527 tests, cobertura 91.46%). Codex #1 código: APROBADO. Claude: tests endurecidos (contrato pinneado, asserts de estado, spy de persistencia, doc-comment ConfigPanel). Codex #2: en curso.
+- Parte 1 (PRD-009): ✅ CERRADA — commit 128e8e7. Ciclo Codex(APROBADO)→Claude(tests endurecidos)→Codex(APROBADO). Gate 1 verde: 527 tests, 91.46%, ruff/mypy/frontend limpios.
+- Parte 2 (PRD-010): implementada verde (ambos builds, badge en bundle prerender, 9 acciones cubiertas + excepción what-if RF-004). Ciclo de revisión en curso.
 
 ## Registro
 

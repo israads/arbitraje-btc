@@ -15,6 +15,7 @@ import {
   IconRoute,
   IconWallet,
 } from '@tabler/icons-react';
+import { READ_ONLY } from '../lib/config';
 import { DEFAULT_STRATEGY_PARAMS, useStream, type ConnStatus } from '../hooks/useStream';
 import { PricesTable } from '../components/PricesTable';
 import { OpportunitiesTable } from '../components/OpportunitiesTable';
@@ -259,6 +260,13 @@ export default function DashboardPage() {
             >
               Tour
             </Button>
+            {READ_ONLY && (
+              /* Badge de superficie (PRD-010): persistente en todas las tabs y en móvil
+                 (sin hiddenFrom/visibleFrom), textual y distinto de DEMO DATA/HALTED. */
+              <Badge color="gray" variant="outline" style={{ flexShrink: 0 }}>
+                READ-ONLY DEMO
+              </Badge>
+            )}
             {demo.active && (
               <>
                 {/* Siempre visible: en móvil versión compacta para no desbordar el header. */}

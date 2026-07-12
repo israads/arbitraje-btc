@@ -11,7 +11,21 @@ COPY frontend/ ./
 
 ENV NEXT_PUBLIC_API_BASE=""
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Superficie read-only (PRD-010). Build-time: Next sustituye NEXT_PUBLIC_* al compilar;
+# un flag runtime no cambia un bundle ya hecho. Default seguro `1` + arg explícito en el
+# compose (redundancia deliberada). Solo se admite exactamente 0 o 1.
+ARG NEXT_PUBLIC_READ_ONLY=1
+RUN case "$NEXT_PUBLIC_READ_ONLY" in \
+      0|1) ;; \
+      *) echo "NEXT_PUBLIC_READ_ONLY debe ser exactamente 0 o 1 (recibido: '$NEXT_PUBLIC_READ_ONLY')" >&2; exit 1 ;; \
+    esac
+ENV NEXT_PUBLIC_READ_ONLY=$NEXT_PUBLIC_READ_ONLY
 RUN npm run build
+# Gate del artefacto (RF-010): una imagen read-only cuyo bundle no contiene el badge es NO-GO.
+RUN if [ "$NEXT_PUBLIC_READ_ONLY" = "1" ]; then \
+      grep -rqF 'READ-ONLY DEMO' .next || { echo "bundle read-only sin el literal 'READ-ONLY DEMO'" >&2; exit 1; }; \
+    fi
 
 # Usuario no privilegiado (imagen node trae `node`): `next start` escribe cache en .next.
 RUN chown -R node:node /app/.next

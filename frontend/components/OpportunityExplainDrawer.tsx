@@ -15,9 +15,12 @@ import {
   Text,
 } from '@mantine/core';
 import { IconArrowNarrowRight, IconChecklist, IconScale, IconSend, IconShieldCheck } from '@tabler/icons-react';
-import { API_BASE } from '../lib/config';
+import { API_BASE, READ_ONLY } from '../lib/config';
 import type { OpportunityExplanation, StrategyLabParams } from '../hooks/useStream';
 import { SectionHeader, VenueTag } from './primitives';
+
+// Texto literal exigido por PRD-010 para todo control deshabilitado en la demo pública.
+const RO_HINT = 'Demo pública read-only';
 
 function money(n: number | null | undefined, signed = false): string {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -236,7 +239,8 @@ export function OpportunityExplainDrawer({
   }
 
   async function runPreflight() {
-    if (!executionPayload) return;
+    // Read-only: el POST protegido NO sale del navegador (el 401 no es el mecanismo de UX).
+    if (READ_ONLY || !executionPayload) return;
     setPreflightLoading(true);
     setExecutionError(null);
     setTestOrder(null);
@@ -250,7 +254,8 @@ export function OpportunityExplainDrawer({
   }
 
   async function runTestOrder() {
-    if (!executionPayload) return;
+    // Read-only: el POST protegido NO sale del navegador (el 401 no es el mecanismo de UX).
+    if (READ_ONLY || !executionPayload) return;
     setTestOrderLoading(true);
     setExecutionError(null);
     try {
@@ -387,9 +392,10 @@ export function OpportunityExplainDrawer({
                 variant="light"
                 color="brand"
                 leftSection={<IconChecklist size={15} />}
-                disabled={!executionPayload}
+                disabled={READ_ONLY || !executionPayload}
                 loading={preflightLoading}
                 onClick={runPreflight}
+                aria-label={READ_ONLY ? `Preflight — ${RO_HINT}` : undefined}
               >
                 Preflight
               </Button>
@@ -398,12 +404,18 @@ export function OpportunityExplainDrawer({
                 variant="outline"
                 color="aqua"
                 leftSection={<IconSend size={15} />}
-                disabled={!executionPayload || !preflight?.accepted}
+                disabled={READ_ONLY || !executionPayload || !preflight?.accepted}
                 loading={testOrderLoading}
                 onClick={runTestOrder}
+                aria-label={READ_ONLY ? `Test order — ${RO_HINT}` : undefined}
               >
                 Test order
               </Button>
+              {READ_ONLY && (
+                <Text size="xs" c="dimmed">
+                  {RO_HINT}
+                </Text>
+              )}
               {executionPayload && (
                 <Text size="xs" c="dimmed" ff="monospace">
                   {executionPayload.side.toUpperCase()} · {executionPayload.quantity_btc.toFixed(5)} BTC

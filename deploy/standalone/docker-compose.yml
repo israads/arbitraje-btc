@@ -28,6 +28,10 @@ services:
     build:
       context: ../..
       dockerfile: deploy/standalone/Dockerfile.frontend
+      args:
+        # Visor público read-only (PRD-010). Explícito además del default `1` del
+        # Dockerfile: si alguien borra esta línea, el build sigue siendo read-only.
+        NEXT_PUBLIC_READ_ONLY: "1"
     image: arbitraje-btc-frontend
     # `next start` ignora la env HOSTNAME (solo aplica al modo standalone) y bindea a
     # localhost, quedando inalcanzable desde nginx. El flag -H 0.0.0.0 si surte efecto.

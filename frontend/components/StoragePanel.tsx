@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Badge, Box, Button, Card, Group, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core';
 import { IconDatabase, IconDeviceFloppy, IconAlertTriangle } from '@tabler/icons-react';
-import { API_BASE } from '../lib/config';
+import { API_BASE, READ_ONLY } from '../lib/config';
 import { POS, NEG, SectionHeader } from './primitives';
+
+// Texto literal exigido por PRD-010 para todo control deshabilitado en la demo pública.
+const RO_HINT = 'Demo pública read-only';
 
 /**
  * Panel de Almacenamiento: uso real de la DB + política de retención. Mide tasa de inserción
@@ -93,6 +96,8 @@ export function StoragePanel() {
 
   const apply = async () => {
     if (busy) return;
+    // Read-only: el PATCH protegido NO sale del navegador (el 401 no es el mecanismo de UX).
+    if (READ_ONLY) return;
     setBusy(true);
     try {
       const r = await fetch(`${API_BASE}/api/v1/storage/retention`, {
@@ -178,14 +183,20 @@ export function StoragePanel() {
             <Text size="xs" tt="uppercase" fw={600} c="dimmed" mb={6} style={{ fontSize: 10 }}>
               Conservar histórico
             </Text>
-            <SegmentedControl
-              fullWidth
-              size="xs"
-              value={selected}
-              onChange={setSelected}
-              data={CHOICES}
-              color="brand"
-            />
+            <Tooltip label={RO_HINT} withArrow disabled={!READ_ONLY}>
+              <Box>
+                <SegmentedControl
+                  fullWidth
+                  size="xs"
+                  value={selected}
+                  onChange={setSelected}
+                  data={CHOICES}
+                  color="brand"
+                  disabled={READ_ONLY}
+                  aria-label={READ_ONLY ? `Conservar histórico — ${RO_HINT}` : undefined}
+                />
+              </Box>
+            </Tooltip>
           </Box>
 
           <Box
@@ -215,11 +226,18 @@ export function StoragePanel() {
             variant={dirty ? 'filled' : 'light'}
             leftSection={<IconDeviceFloppy size={15} />}
             loading={busy}
+            disabled={READ_ONLY}
             onClick={apply}
             style={{ alignSelf: 'flex-start' }}
+            aria-label={READ_ONLY ? `Aplicar retención — ${RO_HINT}` : undefined}
           >
             {dirty ? 'Aplicar y podar ahora' : 'Guardado'}
           </Button>
+          {READ_ONLY && (
+            <Text size="xs" c="dimmed" mt={-8}>
+              {RO_HINT}: la retención y la poda las aplica el operador por CLI.
+            </Text>
+          )}
         </Stack>
       )}
     </Card>
