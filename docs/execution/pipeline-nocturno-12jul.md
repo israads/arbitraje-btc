@@ -54,7 +54,8 @@
 - Parte 4: ✅ VERDE — gate preliminar sobre 82a21a7 desde worktree limpio: backend 532/91.51%, frontend ambos builds 264 kB, compose config+build OK. Sin tag (correcto).
 - Parte 5 (PRD-012): ✅ CERRADA — commit 25e0780. Ciclo Codex(CORREGIDO guards/responsive)→Claude(contratos+runtime jury verificados, sin correcciones)→Codex(APROBADO). 533 tests.
 - Parte 6 (PRD-013): ✅ CERRADA — commit f4d75e2 (+d8aae67 excluye sidecars WAL/SHM colados). Ciclo Codex(CORREGIDO: 2 carreras reales — publicar demo antes de books, baseline monotónica)→Claude(SSE runtime verificado en vivo, +1 test)→Codex(CORREGIDO estados literales). 546 tests/91.64%. order_failure reformulado honesto (RF-003B).
-- Parte 7 (PRD-014): implementación en curso.
+- Parte 7 (PRD-014): ✅ CERRADA — commit 473f0f1. Ciclo Codex(CORREGIDO fallbacks mode/route)→Claude(verificación VISUAL en Chrome sobre stack vivo: CASO CANÓNICO, LIVE+ruta, RECORDING→REPLAY, Equity neutral, esperado/observado actualizándose en vivo entre capturas)→Codex(APROBADO). 546 tests/91.64%.
+- Parte 8: P2 selectivo en curso (5 ítems) → luego re-gate final, tag candidato-12jul, evidencia, smoke Chrome, demo.
 
 ## Registro
 

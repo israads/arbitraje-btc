@@ -82,6 +82,14 @@ export function StrategyLabPanel({
     };
     setDraft(defaults);
     onApply(defaults);
+    // Honesto con el alcance real: reset nunca hace PATCH al backend. En read-only todo el
+    // what-if es de sesión; en modo operador los parámetros persistidos no cambian hasta Aplicar.
+    notifications.show({
+      message: READ_ONLY
+        ? 'Valores por defecto restaurados (solo esta sesión; nada persiste)'
+        : 'Valores por defecto restaurados en esta sesión; pulsa Aplicar para persistirlos',
+      color: 'aqua',
+    });
   };
 
   return (

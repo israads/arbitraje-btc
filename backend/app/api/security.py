@@ -26,6 +26,17 @@ _EXEMPT_PREFIXES = (
 _MAX_TRACKED_IPS = 4096
 
 
+def constant_time_eq(provided: str, expected: str) -> bool:
+    """Igualdad constant-time tolerante a no-ASCII. `hmac.compare_digest` sobre `str` lanza
+    TypeError si algún lado contiene caracteres no-ASCII — y los headers HTTP llegan
+    decodificados latin-1, así que un cliente puede provocarlo. Se compara en bytes
+    (surrogatepass nunca lanza) para que un header malformado sea un 401 normal, no un 500."""
+    return hmac.compare_digest(
+        provided.encode("utf-8", "surrogatepass"),
+        expected.encode("utf-8", "surrogatepass"),
+    )
+
+
 def _client_ip(request: Request) -> str:
     """IP de origen real (peer TCP). NO se usa X-Forwarded-For: es controlable por el cliente
     cuando no hay un proxy de confianza delante, lo que permitiría evadir el límite y crear
@@ -54,8 +65,9 @@ class ApiGuardMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS" or any(path.startswith(p) for p in _EXEMPT_PREFIXES):
             return await call_next(request)
 
-        # compare_digest: comparación constant-time — no filtra prefijos de la clave por timing.
-        if self._api_key and not hmac.compare_digest(
+        # constant_time_eq: comparación constant-time — no filtra prefijos de la clave por
+        # timing y tolera headers no-ASCII (401 en lugar de 500).
+        if self._api_key and not constant_time_eq(
             request.headers.get("x-api-key") or "", self._api_key
         ):
             return JSONResponse({"detail": "invalid or missing API key"}, status_code=401)

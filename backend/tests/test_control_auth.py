@@ -48,6 +48,17 @@ def test_control_rejects_wrong_token(secured_client):
     assert r.status_code == 401
 
 
+def test_control_rejects_non_ascii_token(secured_client):
+    """Header con no-ASCII (latin-1, como viaja en el wire): `hmac.compare_digest` sobre str
+    lanzaría TypeError → 500; la comparación en bytes debe devolver un 401 limpio. Se envía
+    en bytes porque httpx (cliente) rechaza str no-ASCII, pero Starlette lo decodifica latin-1."""
+    r = secured_client.post(
+        "/api/v1/control/kill-switch",
+        headers={b"X-Control-Token": "s3crét".encode("latin-1")},
+    )
+    assert r.status_code == 401
+
+
 def test_control_accepts_correct_token(secured_client):
     r = secured_client.post(
         "/api/v1/control/kill-switch", headers={"X-Control-Token": "s3cret"}

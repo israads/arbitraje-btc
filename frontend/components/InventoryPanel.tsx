@@ -9,6 +9,7 @@ import type {
   Pnl,
   RebalanceSummary,
 } from '../hooks/useStream';
+import { TIME_LOCALE } from '../lib/format';
 import { FetchFallback, NEG, POS, SectionHeader, StatCard, VenueTag } from './primitives';
 
 /**
@@ -138,7 +139,7 @@ function buildRows(balances: BalancesResponse | null, equityByVenue: Record<stri
 
 function tsLabel(ts: number): string {
   if (!fin(ts) || ts <= 0) return 'timestamp no disponible';
-  return new Date(ts * 1000).toLocaleTimeString();
+  return new Date(ts * 1000).toLocaleTimeString(TIME_LOCALE);
 }
 
 export function InventoryPanel({
@@ -193,7 +194,7 @@ export function InventoryPanel({
             {stale && (
               <Badge variant="light" color="yellow">
                 DATOS DESACTUALIZADOS
-                {updatedAt != null ? ` · ${new Date(updatedAt).toLocaleTimeString()}` : ''}
+                {updatedAt != null ? ` · ${new Date(updatedAt).toLocaleTimeString(TIME_LOCALE)}` : ''}
               </Badge>
             )}
             <Badge variant="light" color="gray">

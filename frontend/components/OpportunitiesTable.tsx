@@ -4,6 +4,7 @@ import { memo, useMemo } from 'react';
 import { ActionIcon, Badge, Card, Group, Table, Text, Tooltip } from '@mantine/core';
 import { IconArrowNarrowRight, IconInfoCircle, IconTargetArrow } from '@tabler/icons-react';
 import type { RouteStat } from '../hooks/useStream';
+import { NUM_LOCALE } from '../lib/format';
 import { SectionHeader, VenueTag } from './primitives';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -35,7 +36,7 @@ const REASON_LABEL: Record<string, string> = {
 
 function fmt(n: number | null | undefined, signed = false): string {
   if (n == null || !Number.isFinite(n)) return '—';
-  const s = n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const s = n.toLocaleString(NUM_LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return signed && n > 0 ? `+${s}` : s;
 }
 
@@ -82,7 +83,7 @@ function OpportunitiesTableImpl({
               {rows.length} rutas
             </Badge>
             <Badge variant="light" color="aqua" size="lg">
-              {detectedCount.toLocaleString()} detectadas
+              {detectedCount.toLocaleString(NUM_LOCALE)} detectadas
             </Badge>
           </Group>
         }
@@ -122,9 +123,9 @@ function OpportunitiesTableImpl({
                       <VenueTag name={r.buy_venue} fw={500} />
                       <IconArrowNarrowRight size={16} color="var(--mantine-color-dark-2)" />
                       <VenueTag name={r.sell_venue} fw={500} />
-                      <Tooltip label={`${r.detected.toLocaleString()} detecciones en sesión`} withArrow>
+                      <Tooltip label={`${r.detected.toLocaleString(NUM_LOCALE)} detecciones en sesión`} withArrow>
                         <Text size="xs" c="dimmed" ff="monospace" ml={4}>
-                          ×{r.detected.toLocaleString()}
+                          ×{r.detected.toLocaleString(NUM_LOCALE)}
                         </Text>
                       </Tooltip>
                     </Group>

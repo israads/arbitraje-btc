@@ -31,6 +31,10 @@ def test_api_key_required_when_set() -> None:
     with TestClient(_app(api_key="secret")) as c:
         assert c.get("/api/v1/ping").status_code == 401
         assert c.get("/api/v1/ping", headers={"X-API-Key": "secret"}).status_code == 200
+        assert c.get(
+            "/api/v1/ping",
+            headers={b"X-API-Key": "secrét".encode("latin-1")},
+        ).status_code == 401
         # health queda exento de auth
         assert c.get("/health").status_code == 200
 

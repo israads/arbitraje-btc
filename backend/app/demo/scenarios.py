@@ -75,7 +75,8 @@ def _book(
 
 
 def build_jury_scenarios() -> tuple[JuryScenario, ...]:
-    """Cinco escenarios obligatorios del PRD-002.
+    """Siete escenarios del catálogo jury: los cinco obligatorios del PRD-002 más
+    `thin_book` y `order_failure` (PRD-013).
 
     Los precios ya están normalizados a USD. En los escenarios USDT se incluye
     `price_norm_factor` y el player actualiza el peg para que el evaluador pueda

@@ -3,7 +3,6 @@ vivo (`/quotes`, `/opportunities`). El resto son stubs hasta su story."""
 from __future__ import annotations
 
 import asyncio
-import hmac
 import logging
 import math
 import time
@@ -23,6 +22,7 @@ from ...models.params import RetentionRequest, RuntimeParamOverrides, WhatIfRequ
 from ...models.preflight import PreflightRequest, TestOrderRequest
 from ...models.session import SessionExport, SessionMetadata
 from ...models.strategy import StrategyInfo
+from ..security import constant_time_eq
 
 router = APIRouter()
 log = logging.getLogger("app.api.v1")
@@ -89,10 +89,11 @@ def require_control_token(
     """Auth mínima de los endpoints de control. Si `settings.control_token` está vacío (dev),
     pasa siempre; si está set, exige el header `X-Control-Token` exacto. Lee el token del
     `ctx.settings` inyectado en el lifespan (respeta los settings de tests). La comparación es
-    constant-time (`hmac.compare_digest`) para no filtrar prefijos por timing."""
+    constant-time y tolerante a no-ASCII (`constant_time_eq`): no filtra prefijos por timing
+    y un header con caracteres no-ASCII produce 401, no 500."""
     ctx = request.app.state.ctx
     expected = ctx.settings.control_token or ""
-    if expected and not hmac.compare_digest(x_control_token or "", expected):
+    if expected and not constant_time_eq(x_control_token or "", expected):
         raise HTTPException(status_code=401, detail="invalid or missing X-Control-Token")
 
 

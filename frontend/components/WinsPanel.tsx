@@ -4,6 +4,7 @@ import { memo } from 'react';
 import { Badge, Box, Card, Group, ScrollArea, Table, Text } from '@mantine/core';
 import { IconTrophy, IconCircleCheck } from '@tabler/icons-react';
 import type { WinsReport } from '../hooks/useStream';
+import { NUM_LOCALE, TIME_LOCALE } from '../lib/format';
 import { POS, SectionHeader, VenueTag } from './primitives';
 
 /**
@@ -12,12 +13,12 @@ import { POS, SectionHeader, VenueTag } from './primitives';
  * Datos de GET /api/v1/analysis/wins.
  */
 
-const money = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+const money = (n: number) => `$${n.toLocaleString(NUM_LOCALE, { maximumFractionDigits: 2 })}`;
 const perBtc = (n: number | null) => (n == null ? '—' : `${money(n)}/BTC`);
 
 function ts(epoch: number): string {
   try {
-    return new Date(epoch * 1000).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return new Date(epoch * 1000).toLocaleTimeString(TIME_LOCALE, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   } catch {
     return '—';
   }

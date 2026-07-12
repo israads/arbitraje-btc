@@ -4,12 +4,13 @@ import { memo } from 'react';
 import { Badge, Card, Grid, Group, Progress, Stack, Table, Text, Title } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import type { Metrics } from '../hooks/useStream';
+import { NUM_LOCALE } from '../lib/format';
 import { SectionHeader } from './primitives';
 
 function fmt(n: number | null | undefined, d = 2): string {
   return n == null || !Number.isFinite(n)
     ? '—'
-    : n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+    : n.toLocaleString(NUM_LOCALE, { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -71,7 +72,7 @@ function FunnelPanelImpl({ metrics }: { metrics: Metrics | null }) {
                   {s.label}
                 </Text>
                 <Text size="sm" ff="monospace" className="mono-nums" c="dimmed">
-                  {v.toLocaleString()}{' '}
+                  {v.toLocaleString(NUM_LOCALE)}{' '}
                   <Text span c={`${s.color}.4`} fw={600}>
                     {pct.toFixed(1)}%
                   </Text>
@@ -86,7 +87,7 @@ function FunnelPanelImpl({ metrics }: { metrics: Metrics | null }) {
             Descartadas
           </Text>
           <Text size="sm" ff="monospace" className="mono-nums" c="dimmed">
-            {(m?.discarded ?? 0).toLocaleString()}
+            {(m?.discarded ?? 0).toLocaleString(NUM_LOCALE)}
             {m?.unwound ? ` · ${m.unwound} unwind` : ''}
           </Text>
         </Group>
@@ -127,7 +128,7 @@ function FunnelPanelImpl({ metrics }: { metrics: Metrics | null }) {
                     {REASON_LABEL[reason] ?? reason}
                   </Text>
                   <Text size="sm" ff="monospace" className="mono-nums" fw={600}>
-                    {count.toLocaleString()}
+                    {count.toLocaleString(NUM_LOCALE)}
                   </Text>
                 </Group>
               ))}
