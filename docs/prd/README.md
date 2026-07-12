@@ -63,6 +63,31 @@ La ruta crítica para una versión superior de competencia es:
 Explain API/UI -> Demo reproducible -> Preflight testnet -> Integridad por venue -> Calibración
 ```
 
+## Ciclo de cierre 12-jul-2026 (PRD-009 a PRD-015)
+
+PRDs del cierre final ante el comité. Derivan de [docs/plan-accion-final-12jul.md](../plan-accion-final-12jul.md) y comparten una arquitectura consolidada única: [Arquitectura 009 — Cierre 12-jul](../architecture/009-cierre-12jul.md).
+
+| Orden | PRD | Arquitectura | Prioridad | Por qué va primero |
+|---:|---|---|---:|---|
+| 1 | [PRD-009 Atomicidad del ledger y venues](009-atomicidad-ledger-venues.md) | [Arquitectura consolidada](../architecture/009-cierre-12jul.md) | P0 | Defecto financiero invalidante; bloquea todo lo demás |
+| 2 | [PRD-010 Superficie pública read-only (auth opción A)](010-superficie-readonly-auth.md) | [Arquitectura consolidada](../architecture/009-cierre-12jul.md) | P0 | El deploy público no puede mostrar controles que fallen |
+| 3 | [PRD-011 Deploy reproducible y persistente](011-deploy-reproducible-persistente.md) | [Arquitectura consolidada](../architecture/009-cierre-12jul.md) | P0 | Volumen, lock, health veraz; condiciona los gates Docker |
+| 4 | [PRD-012 Panel Inventario & Rebalanceo (C3)](012-panel-inventario-rebalanceo.md) | [Arquitectura consolidada](../architecture/009-cierre-12jul.md) | P0 | Responde "¿dónde está el BTC?" sin DevTools |
+| 5 | [PRD-013 Escenarios honestos esperado → observado](013-escenarios-esperado-observado.md) | [Arquitectura consolidada](../architecture/009-cierre-12jul.md) | P0 | Ningún claim de escenario sin evidencia de su activación |
+| 6 | [PRD-014 Narrativa visual honesta](014-narrativa-visual-honesta.md) | [Arquitectura consolidada](../architecture/009-cierre-12jul.md) | P0 | Cada cifra declara origen, muestra y naturaleza |
+| 7 | [PRD-015 Release autocontenido + paquete de evidencia](015-release-suite-evidencia.md) | [Arquitectura consolidada](../architecture/009-cierre-12jul.md) | P0 | Cierra: re-gate acumulado, tag inmutable y evidencia |
+
+Dependencias del ciclo de cierre:
+
+```text
+PRD-009 -> todos (gate Go: sin atomicidad no hay redeploy ni tag)
+PRD-010 -> PRD-011 (el bundle read-only debe existir antes del gate Docker)
+PRD-010 -> PRD-012, PRD-013, PRD-014 (toda superficie nueva nace bajo la matriz read-only)
+PRD-011 -> PRD-015 (gate Compose del release)
+PRD-013 -> PRD-015 (el export de evidencia exige scenario_run_id)
+PRD-009..PRD-014 -> PRD-015 (re-gate final y tag candidato)
+```
+
 ## Primer sprint recomendado
 
 El primer sprint debe cerrar P0 y dejar el proyecto listo para una demo superior. No conviene empezar por triangular, funding o rendimiento hasta que la decisión principal sea visible. El desglose completo de tareas vive en [work-breakdown.md](../execution/work-breakdown.md).
