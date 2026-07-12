@@ -50,7 +50,9 @@
 
 - Parte 1 (PRD-009): ✅ CERRADA — commit 128e8e7. Ciclo Codex(APROBADO)→Claude(tests endurecidos)→Codex(APROBADO). Gate 1 verde: 527 tests, 91.46%, ruff/mypy/frontend limpios.
 - Parte 2 (PRD-010): ✅ CERRADA — commit 3a589f3. Ciclo Codex(APROBADO)→Claude(sin correcciones)→Codex(APROBADO). Gate acumulado verde.
-- Parte 3 (PRD-011): implementada verde — 532 tests/91.51%, health con estados terminales, composes con volumen+healthcheck, Dockerfiles por digest, docker build+run verificado (uid 10001, /data ok). §13: PARCHES INTEGRADOS (aiohttp 3.14.1, cryptography 48.0.1, pydantic-settings 2.14.2, starlette 1.3.1) — sin excepción necesaria. Ciclo de revisión en curso.
+- Parte 3 (PRD-011): ✅ CERRADA — commits 44a12e1 (producto) + 82a21a7 (deps §13 aislado). Ciclo Codex(APROBADO)→Claude(BUG REAL corregido: orden de PRAGMAs auto_vacuum/WAL en db.py; runtime Docker verificado con healthy+UID10001+WAL+av=2+persistencia tras restart)→Codex(APROBADO). §13: PARCHES INTEGRADOS sin excepción.
+- Parte 4: ✅ VERDE — gate preliminar sobre 82a21a7 desde worktree limpio: backend 532/91.51%, frontend ambos builds 264 kB, compose config+build OK. Sin tag (correcto).
+- Parte 5 (PRD-012): implementada verde (533 tests; fix epoch en capa impura; /balances en pullLight con guards; InventoryPanel con 5 estados). Ciclo de revisión en curso.
 
 ## Registro
 

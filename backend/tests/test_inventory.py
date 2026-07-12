@@ -801,6 +801,42 @@ async def test_rebalancer_periodic_task_fires_once_then_idles():
     assert pf.rebalance_count == 1
 
 
+async def test_rebalance_event_has_wall_clock_epoch_ts(monkeypatch):
+    """PRD-012 RF-001: la tarea periódica registra el rebalanceo con epoch real de pared
+    (`time.time()`), no `ts=0.0` (que derivaría fechas de 1970). El reloj se parchea en el
+    módulo impuro `app.sim.rebalancer`; `Portfolio.rebalance` sigue puro (ts por parámetro)."""
+    from types import SimpleNamespace
+
+    import app.sim.rebalancer as rebalancer_mod
+    from app.sim import Rebalancer
+
+    epoch = 1_720_000_000.25
+    monkeypatch.setattr(rebalancer_mod, "time", SimpleNamespace(time=lambda: epoch))
+
+    s = _settings()
+    s.rebalance_interval_ms = 5
+    pf = Portfolio(s)
+    pf.venues["binance"].btc = 3.5
+    pf.venues["kraken"].btc = 0.5
+    state = SimpleNamespace(
+        portfolio=pf,
+        detector=SimpleNamespace(books=_uniform_books(100.0)),
+    )
+    rb = Rebalancer(state, s)  # type: ignore[arg-type]
+
+    async def one_tick(_interval: float) -> None:
+        # El loop ya entró en la iteración: detenerlo aquí permite ejecutar exactamente un
+        # tick sin depender del scheduler ni esperar tiempo de pared.
+        rb.stop()
+
+    monkeypatch.setattr(rebalancer_mod.asyncio, "sleep", one_tick)
+    await rb.run()
+    assert pf.rebalance_count == 1
+    recent = pf.pnl_summary(_uniform_books(100.0))["rebalance"]["recent"]
+    assert recent, "el rebalanceo debe quedar registrado en pnl_summary()"
+    assert recent[0]["ts"] == epoch
+
+
 def test_unwind_execution_conserves_in_portfolio():
     """STORY-016: un `Execution` de UNWIND (dos legs en el MISMO venue de compra: compra +
     venta de vuelta) aplicado a la cartera conserva los balances y cumple la invariante

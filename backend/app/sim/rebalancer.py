@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from ..config import Settings
@@ -43,7 +44,10 @@ class Rebalancer:
                     continue
                 # Libros normalizados vivos (USD por peg) que mantiene el detector — la MISMA
                 # fuente que usa el wiring para marcar la equity (main.py record_equity_point).
-                event = pf.rebalance(detector.books, ts=0.0)
+                # Epoch real (UTC): el reloj se lee aquí (capa impura); `Portfolio.rebalance`
+                # sigue puro y determinista recibiendo el ts por parámetro. NO monotonic:
+                # no representa una fecha (PRD-012 RF-001).
+                event = pf.rebalance(detector.books, ts=time.time())
                 if event is not None:
                     logger.warning(
                         "rebalance: skew %.3f -> %.3f, cost $%.2f (fee %.6f BTC)",

@@ -169,13 +169,70 @@ export interface DemoStatus {
   n_scenarios?: number;
 }
 
+/** Inventario & rebalanceo (PRD-012): contratos de GET /balances y la sección de /pnl.
+ * Las propiedades opcionales reflejan la rama real SIN portfolio del backend
+ * (router.py: `{balances: [], equity_by_venue: {}, skew: {}, snapshot: null}` y /pnl sin
+ * `initial_quote_usd`/`equity_by_venue`/`rebalance`), no una preferencia de diseño. */
+export interface BalanceItem {
+  exchange: string;
+  asset: string;
+  amount: number;
+}
+
+export interface InventorySkew {
+  btc_by_venue: Record<string, number>;
+  total_btc: number;
+  skew: number;
+  limit: number;
+  breached: boolean;
+}
+
+export interface RebalanceEvent {
+  ts: number;
+  cost_usd: number;
+  fee_btc: number;
+  ref_mark: number;
+  skew_before: number;
+  skew_after: number;
+}
+
+export interface RebalanceSummary {
+  count: number;
+  cost_total_usd: number;
+  recent: RebalanceEvent[];
+}
+
+export interface InventorySnapshot {
+  ts: number;
+  balances: BalanceItem[];
+  total_usd: number | null;
+}
+
+export interface BalancesResponse {
+  balances: BalanceItem[];
+  equity_by_venue: Record<string, number>;
+  equity_usd?: number; // ausente sin portfolio
+  skew: InventorySkew | Record<string, never>;
+  snapshot: InventorySnapshot | null;
+}
+
+/** Coste amortizado de rebalanceo usado para DECIDIR la última oportunidad (breakdown
+ * `rebalance` de /explain, magnitud de un `usd` negativo). Distinto del debitado al ledger. */
+export interface DecisionRebalanceCost {
+  opportunityId: string;
+  usd: number;
+}
+
 export interface Pnl {
   realized_pnl: number;
   unrealized_pnl: number;
   total_pnl: number;
   equity_usd: number;
+  initial_quote_usd?: number;
+  equity_by_venue?: Record<string, number>;
   equity_series: { ts: number; equity: number }[];
-  skew: Record<string, unknown>;
+  skew: InventorySkew | Record<string, never>;
+  rebalance?: RebalanceSummary;
 }
 
 /** Reconciliación del reto ($109.75/BTC) + invariantes (C15, GET /api/v1/validation).
@@ -393,6 +450,8 @@ const EMPTY_DEMO: DemoStatus = { active: false, mode: 'auto', source: 'live', ba
 // intervalo, "EN VIVO" estaría mintiendo → status pasa a `stale` hasta el siguiente evento.
 const STALE_AFTER_MS = 10_000;
 const STALE_CHECK_MS = 2_000;
+const BALANCES_REQUEST_WINDOW_MS = 15_000;
+const BALANCES_MAX_REQUESTS_PER_WINDOW = 4;
 
 /** Fetches con estado de error visible en UI (para distinguir "cargando" de "falló"). */
 export type FetchErrorKey = 'validation' | 'projection' | 'capacity' | 'forward' | 'survival';
@@ -465,6 +524,13 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const [naiveVsEdge, setNaiveVsEdge] = useState<NaiveVsEdgeReport | null>(null);
   const [wins, setWins] = useState<WinsReport | null>(null);
   const [errors, setErrors] = useState<FetchErrors>(NO_ERRORS);
+  // Inventario (PRD-012): /balances con frescura y retry propios. Un fallo conserva el
+  // último snapshot exitoso (el panel lo marca "desactualizado"); un éxito limpia el error.
+  const [balances, setBalances] = useState<BalancesResponse | null>(null);
+  const [balancesLoading, setBalancesLoading] = useState(true);
+  const [balancesError, setBalancesError] = useState(false);
+  const [balancesUpdatedAt, setBalancesUpdatedAt] = useState<number | null>(null);
+  const [decisionCost, setDecisionCost] = useState<DecisionRebalanceCost | null>(null);
 
   const quotesBuf = useRef<Record<string, Quote>>({});
   const oppsBuf = useRef<Opportunity[]>([]);
@@ -483,6 +549,18 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const lastEventRef = useRef(Date.now());
   // AbortController vigente de los fetch pesados (para que retryHeavy comparta su señal).
   const heavyAcRef = useRef<AbortController | null>(null);
+  // AbortController del ciclo ligero (para que retryBalances comparta su señal).
+  const lightAcRef = useRef<AbortController | null>(null);
+  // Request vigente de /balances. Guardar su identidad evita que el `finally` de un request
+  // abortado por StrictMode/cleanup libere por error un request del ciclo siguiente.
+  const balancesRequestRef = useRef<{
+    signal: AbortSignal;
+    start: { startedAt: number };
+  } | null>(null);
+  // Incluye polling y retry en el mismo límite: ningún camino de UI puede saltarse el cap.
+  const balancesRequestStartsRef = useRef<{ startedAt: number }[]>([]);
+  // Última oportunidad ya consultada en /explain (coste de decisión): no reconsultar el mismo ID.
+  const lastExplainedIdRef = useRef<string | null>(null);
 
   const markError = useCallback((key: FetchErrorKey, value: boolean) => {
     setErrors((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
@@ -494,6 +572,60 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       .then((v) => { setValidation(v); markError('validation', false); })
       .catch(() => markError('validation', true));
   }, [markError]);
+
+  /** /balances (PRD-012): dentro del ciclo ligero de 5 s, sin intervalo propio. Reintentable
+   * desde la UI (`retryBalances`); guard de in-flight para no solapar requests. */
+  const pullBalances = useCallback((isRetry = false) => {
+    const active = balancesRequestRef.current;
+    if (active && !active.signal.aborted) return;
+
+    const signal = lightAcRef.current?.signal;
+    if (!signal || signal.aborted) return;
+
+    const startedAt = Date.now();
+    const recentStarts = balancesRequestStartsRef.current.filter(
+      (start) => startedAt - start.startedAt < BALANCES_REQUEST_WINDOW_MS,
+    );
+    if (recentStarts.length >= BALANCES_MAX_REQUESTS_PER_WINDOW) {
+      balancesRequestStartsRef.current = recentStarts;
+      return;
+    }
+    const start = { startedAt };
+    balancesRequestStartsRef.current = [...recentStarts, start];
+    const request = { signal, start };
+    balancesRequestRef.current = request;
+    if (isRetry) {
+      setBalancesError(false);
+      setBalancesLoading(true);
+    }
+
+    fetchJson<BalancesResponse>(`${API_BASE}/api/v1/balances`, { signal })
+      .then((b) => {
+        setBalances(b);
+        setBalancesError(false);
+        setBalancesUpdatedAt(Date.now());
+      })
+      .catch(() => {
+        // Abort al desmontar no es un error de datos; un fallo real conserva el último
+        // snapshot (el panel lo marca "DATOS DESACTUALIZADOS" con su hora).
+        if (!signal.aborted) {
+          setBalancesError(true);
+        } else {
+          // Un montaje abortado no debe consumir cuota del montaje que lo reemplaza.
+          balancesRequestStartsRef.current = balancesRequestStartsRef.current.filter(
+            (entry) => entry !== start,
+          );
+        }
+      })
+      .finally(() => {
+        if (balancesRequestRef.current === request) {
+          balancesRequestRef.current = null;
+          if (!signal.aborted) setBalancesLoading(false);
+        }
+      });
+  }, []);
+
+  const retryBalances = useCallback(() => pullBalances(true), [pullBalances]);
 
   /** Fetch pesados (numpy/Monte Carlo): projection/capacity/forward/survival. Los únicos que
    * dependen de los params del Strategy Lab — se relanzan al cambiarlos SIN tocar el SSE. */
@@ -678,18 +810,42 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       fetchJson<WinsReport>(`${API_BASE}/api/v1/analysis/wins?limit=50`, opt)
         .then(setWins)
         .catch(() => undefined);
+      // Inventario (PRD-012): /balances comparte este ciclo (sin segundo intervalo).
+      pullBalances();
+      // Coste amortizado de decisión: a lo sumo UNA consulta /explain por ciclo, sólo si la
+      // oportunidad más reciente cambió. `usd` real es `number | null`: sólo un número finito
+      // produce dato (magnitud: en el waterfall es una resta); lo demás deja el valor previo
+      // (etiquetado con SU id) o "—" si nunca hubo.
+      const lastOppId = oppsBuf.current[0]?.id;
+      if (lastOppId && lastOppId !== lastExplainedIdRef.current) {
+        lastExplainedIdRef.current = lastOppId;
+        fetchJson<OpportunityExplanation>(
+          `${API_BASE}/api/v1/opportunities/${lastOppId}/explain`, opt,
+        )
+          .then((ex) => {
+            const comp = Array.isArray(ex.breakdown)
+              ? ex.breakdown.find((c) => c.key === 'rebalance')
+              : undefined;
+            if (comp && typeof comp.usd === 'number' && Number.isFinite(comp.usd)) {
+              setDecisionCost({ opportunityId: lastOppId, usd: Math.abs(comp.usd) });
+            }
+          })
+          .catch(() => undefined); // 404/409/parcial → sin dato nuevo, nunca 0
+      }
     };
+    lightAcRef.current = ac;
     pullLight();
     const pollLight = setInterval(pullLight, 5000);
 
     return () => {
+      if (lightAcRef.current === ac) lightAcRef.current = null;
       ac.abort();
       es.close();
       cancelAnimationFrame(raf);
       clearInterval(pollLight);
       clearInterval(watchdog);
     };
-  }, [retryValidation]);
+  }, [retryValidation, pullBalances]);
 
   // Proyección viva (fetch pesados): la frontier/capacity dependen del book actual (el backend
   // cae a demo sin ruta viva); forward re-muestrea la grabación. Cómputo numpy/Monte Carlo
@@ -724,5 +880,7 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     status, quotes, opportunities, routeStats, detectedCount,
     metrics, breakers, demo, pnl, validation, projection, capacity, forward, survival, naiveVsEdge,
     wins, errors, retryValidation, retryHeavy,
+    balances, balancesLoading, balancesError, balancesUpdatedAt,
+    retryBalances, decisionCost,
   };
 }

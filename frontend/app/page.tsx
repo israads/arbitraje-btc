@@ -22,6 +22,7 @@ import { OpportunitiesTable } from '../components/OpportunitiesTable';
 import { FunnelPanel } from '../components/FunnelPanel';
 import { LifetimeHistogram } from '../components/LifetimeHistogram';
 import { ControlPanel } from '../components/ControlPanel';
+import { InventoryPanel } from '../components/InventoryPanel';
 import { LiveLineChart } from '../components/LiveLineChart';
 import { EdgeWaterfall } from '../components/EdgeWaterfall';
 import { BreakEvenFrontier } from '../components/BreakEvenFrontier';
@@ -210,6 +211,7 @@ export default function DashboardPage() {
     status, quotes, routeStats, detectedCount, metrics, breakers, demo, pnl, validation,
     projection, capacity, forward, survival, naiveVsEdge, wins,
     errors, retryValidation, retryHeavy,
+    balances, balancesLoading, balancesError, balancesUpdatedAt, retryBalances, decisionCost,
   } = useStream(strategyParams);
   const spread = crossVenueSpread(quotes);
   const total = pnl?.total_pnl ?? 0;
@@ -436,6 +438,17 @@ export default function DashboardPage() {
             {/* OPERACIÓN: control, configuración y rutas */}
             <Tabs.Panel value="operacion">
               <Stack gap="lg">
+                {/* C3 "¿dónde está el BTC?" primero: estado/fetch viven en useStream porque
+                    keepMounted={false} desmonta este panel al cambiar de pestaña. */}
+                <InventoryPanel
+                  balances={balances}
+                  pnl={pnl}
+                  decisionCost={decisionCost}
+                  loading={balancesLoading}
+                  error={balancesError}
+                  updatedAt={balancesUpdatedAt}
+                  onRetry={retryBalances}
+                />
                 <ControlPanel breakers={breakers} demo={demo} />
                 <Box id="tour-config">
                   <ConfigPanel />
