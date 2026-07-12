@@ -5,7 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { IconAlertTriangle, IconBolt, IconDownload, IconPlayerPlay, IconShieldHalf } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { API_BASE, READ_ONLY } from '../lib/config';
-import type { BreakerStatus, DemoStatus } from '../hooks/useStream';
+import type { BreakerStatus, DemoStatus, ScenarioObservationWindow } from '../hooks/useStream';
 import { SectionHeader } from './primitives';
 
 // Texto literal exigido por PRD-010 para todo control deshabilitado en la demo pública.
@@ -26,12 +26,60 @@ interface JuryScenarioInfo {
   expected_result: string | null;
 }
 
+/** PRD-013 RF-001: texto de la línea `observado`. Render PURO del estado que deriva
+ * useStream (dueño único de la ventana): aquí no se recalculan deltas ni contadores. */
+function observedText(
+  w: ScenarioObservationWindow | null | undefined,
+  demo: DemoStatus,
+): string {
+  // Sin ventana del run_id vigente todavía (transición recién emitida) → pending honesto.
+  if (
+    !w
+    || w.runId !== demo.scenario_run_id
+    || w.backendStartedAt !== (demo.scenario_started_at ?? null)
+  ) return 'pending · esperando evidencia (0 muestras posteriores)';
+  if (w.status === 'observed') {
+    if (w.scenario === 'stale_feed') {
+      const since = w.staleSignal?.since;
+      return `observed · feed/breaker stale activo${since != null ? ` (desde t=${since.toFixed(1)}s)` : ''} · sin claim de causalidad`;
+    }
+    const n = w.directReasons[w.expectedReason ?? ''] ?? 0;
+    return `observed · ${w.expectedReason} ×${n} · fuente SSE (delta de esta activación, no total histórico)`;
+  }
+  if (w.status === 'pending') {
+    return `pending · esperando evidencia (${w.postBaselineMetricSamples} muestras posteriores)`;
+  }
+  switch (w.detail) {
+    case 'no_claim':
+      // RF-003B: order_failure no ejerce ejecución; los demás sin claim son deuda visible.
+      return w.scenario === 'order_failure'
+        ? 'absent · preflight/test-order no ejecutado'
+        : 'absent · no aplica; no existe claim';
+    case 'telemetry_restarted':
+      return 'absent · telemetría reiniciada';
+    case 'telemetry_insufficient':
+      return 'absent · telemetría insuficiente (delta en métricas sin evento directo)';
+    case 'evidence_inconsistent':
+      return 'absent · evidencia inconsistente';
+    default:
+      return 'absent · sin efecto atribuido en esta activación';
+  }
+}
+
 /**
  * Panel de control del operador (C18): kill switch / resume (C8) y modo del fallback de
  * demo (C16), más el estado vivo de los circuit breakers. Las acciones hacen POST al
  * backend; el estado resultante llega de vuelta por SSE (breaker/demo) y polling.
  */
-export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo: DemoStatus }) {
+export function ControlPanel({
+  breakers,
+  demo,
+  scenarioWindow,
+}: {
+  breakers: BreakerStatus;
+  demo: DemoStatus;
+  scenarioWindow?: ScenarioObservationWindow | null;
+}) {
   const [busy, setBusy] = useState(false);
   const [scenarios, setScenarios] = useState<JuryScenarioInfo[]>([]);
 
@@ -206,12 +254,25 @@ export function ControlPanel({ breakers, demo }: { breakers: BreakerStatus; demo
                 {RO_HINT}: los escenarios se lanzan por CLI del operador.
               </Text>
             )}
-            {demo.expected_result && (
-              <Badge color="gray" variant="default" mt="xs" tt="none">
-                esperado: {demo.expected_result.replaceAll('_', ' ')}
+          </div>
+        )}
+
+        {/* PRD-013 RF-001: no depende de que cargue el catálogo de controles. Render puro
+            (sin estado propio ni recálculo): useStream deriva toda la ventana. */}
+        {demo.active && demo.mode === 'jury' && demo.scenario && (
+          <Box>
+            {demo.scenario_kind === 'execution' && (
+              <Badge color="gray" variant="outline" tt="none" mb={4}>
+                NO EJERCE EJECUCIÓN
               </Badge>
             )}
-          </div>
+            <Text size="xs" ff="monospace" c="dimmed" lh={1.4} style={{ wordBreak: 'break-word' }}>
+              esperado: {demo.expected_result ?? 'sin resultado verificable declarado'}
+            </Text>
+            <Text size="xs" ff="monospace" c="dimmed" lh={1.4} style={{ wordBreak: 'break-word' }}>
+              observado: {observedText(scenarioWindow, demo)}
+            </Text>
+          </Box>
         )}
 
         <Button

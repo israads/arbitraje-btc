@@ -40,7 +40,9 @@ URLs esperadas:
 
 2. Activar `Jury` en el panel de control.
 
-   Mensaje: "Esta secuencia es determinista y está etiquetada como DEMO DATA. Recorre cinco casos: edge real, falso positivo, depeg, stale feed y profundidad adversa".
+   Mensaje: "Esta secuencia es determinista y está etiquetada como DEMO DATA. Recorre siete escenarios: edge real, falso positivo, depeg, stale feed, decaimiento por latencia, libro delgado y una ruta que no ejerce ejecución. Para cada activación el panel muestra dos líneas: `esperado` (el contrato del escenario) y `observado` (la evidencia medida en esa activación concreta, nunca el total histórico). Si no hay evidencia, lo dice literalmente".
+
+   Nota sobre `order_failure` (PRD-013 RF-003B): este escenario lleva el badge `NO EJERCE EJECUCIÓN`. La narración correcta es: "este escenario inyecta únicamente books deterministas; no invoca preflight ni test-order, así que no reclama ningún rechazo de ejecución — el panel dice `esperado: sin claim de ejecución; sólo books deterministas` y `observado: preflight/test-order no ejecutado`. El rechazo pre-trade real lo demuestra `thin_book`". No decir nunca que aquí se valida un rechazo del exchange.
 
 3. Mostrar una oportunidad y abrir su detalle.
 
@@ -178,6 +180,10 @@ La versión de demo debe permanecer en simulación o testnet. La ejecución real
 
 El feed queda marcado como stale, se reducen o eliminan oportunidades de ese venue y los breakers evitan decisiones sobre datos vencidos.
 
+### "¿Y si una pata falla a mitad de un arbitraje (unwind)?"
+
+El unwind se demuestra vía replay/backtest, etiquetado como tal: una ejecución real del simulador con `unwound=true` producida al pasar la relectura `sell_book_t1`, que es exclusiva de replay. El pipeline live no recibe datos futuros, así que ningún unwind se atribuye al vivo ni al escenario `order_failure` (PRD-013 RF-004).
+
 ### "¿Por qué el proyecto es diferente?"
 
 La mayoría de demos muestran spreads. Este proyecto muestra cuánto queda después de intentar ejecutar.
@@ -201,5 +207,8 @@ La mayoría de demos muestran spreads. Este proyecto muestra cuánto queda despu
 - No decir que el bot garantiza ganancias.
 - No presentar datos sintéticos como live.
 - No afirmar que una oportunidad se puede ejecutar si no hay preflight.
+- No presentar `order_failure` como un rechazo de preflight/test-order: NO EJERCE EJECUCIÓN (RF-003B); el rechazo pre-trade lo demuestra `thin_book`.
+- No narrar un unwind como evento live: todo unwind mostrado proviene de replay/backtest con `unwound=true`.
+- No leer un `esperado` sin su `observado`; `pending`/`absent` se dicen tal cual, nunca se infiere éxito.
 - No ocultar que transferir fondos entre exchanges queda fuera de la ruta crítica.
 - No explicar primero la arquitectura; empezar por la decisión financiera.

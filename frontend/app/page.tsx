@@ -212,6 +212,7 @@ export default function DashboardPage() {
     projection, capacity, forward, survival, naiveVsEdge, wins,
     errors, retryValidation, retryHeavy,
     balances, balancesLoading, balancesError, balancesUpdatedAt, retryBalances, decisionCost,
+    scenarioWindow,
   } = useStream(strategyParams);
   const spread = crossVenueSpread(quotes);
   const total = pnl?.total_pnl ?? 0;
@@ -449,7 +450,7 @@ export default function DashboardPage() {
                   updatedAt={balancesUpdatedAt}
                   onRetry={retryBalances}
                 />
-                <ControlPanel breakers={breakers} demo={demo} />
+                <ControlPanel breakers={breakers} demo={demo} scenarioWindow={scenarioWindow} />
                 <Box id="tour-config">
                   <ConfigPanel />
                 </Box>

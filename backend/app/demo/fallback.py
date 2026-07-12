@@ -66,6 +66,12 @@ class DemoFallback:
         self._jury = JuryScenarioPlayer()
         self._jury_frame: JuryFrame | None = None
         self._jury_market_reset = False
+        # Identidad de activación (PRD-013 RF-002): contador MONOTÓNICO por proceso. Empieza
+        # en -1 para que la primera activación exponga 0. NO se reinicia al salir/volver a
+        # jury (la ventana del cliente se invalida sola al ver mode!=jury o active=false);
+        # nunca se persiste entre procesos: un run_id "menor" en el cliente = proceso nuevo.
+        self._scenario_run_id = -1
+        self._scenario_started_at: float | None = None
         # Recording de respaldo: se carga UNA sola vez aquí (en el arranque, fuera del hot loop
         # del controlador) — leer el JSONL en `tick()` congelaría el event loop justo con los
         # feeds caídos, y se repetiría a 20 Hz si el archivo está vacío/corrupto (revisión HIGH).
@@ -181,6 +187,12 @@ class DemoFallback:
                 "expected_result": frame.scenario.expected_result if frame is not None else None,
                 "scenario_index": frame.scenario_index if frame is not None else 0,
                 "n_scenarios": self._jury.n_scenarios,
+                # Identidad de activación (PRD-013): el cliente NUNCA usa scenario/
+                # scenario_index como clave (se repiten en cada ciclo del player).
+                "scenario_run_id": self._scenario_run_id if frame is not None else None,
+                "scenario_started_at": (
+                    self._scenario_started_at if frame is not None else None
+                ),
             })
         return status
 
@@ -229,16 +241,26 @@ class DemoFallback:
             self._jury_frame is None
             or self._jury_frame.scenario.name != frame.scenario.name
         )
+        if changed:
+            # ÚNICO punto de incremento (PRD-013 RF-002): cubre el auto-avance del player y
+            # la re-selección explícita del MISMO nombre (select_jury_scenario deja
+            # _jury_frame=None → el siguiente frame computa changed=True). started_at toma
+            # el `now` monotónico del primer frame, comparable con opportunity.t_recv.
+            self._scenario_run_id += 1
+            self._scenario_started_at = now
         self._jury_frame = frame
         self._apply_jury_peg(frame, now)
+        if changed and self._on_change is not None:
+            # Publicar la nueva identidad ANTES de inyectar sus books. La inyección recorre
+            # el pipeline de forma síncrona y puede publicar opportunity/metrics; si demo se
+            # encolara después, el cliente atribuiría esos eventos al run_id anterior.
+            self._on_change(self.status())
         for nb in frame.books:
             ts_recv = now
             if frame.scenario.stale:
                 ts_recv = now - (self._settings.staleness_ms / 1000.0) - 0.5
             fresh = nb.model_copy(update={"ts_recv_monotonic": ts_recv})
             self._inject(fresh)
-        if changed and self._on_change is not None:
-            self._on_change(self.status())
 
     def _emit_next(self, now: float) -> None:
         """Inyecta el siguiente tick grabado, re-sellado fresco, cíclicamente (la demo no se

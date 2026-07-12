@@ -64,7 +64,11 @@ class StreamPublisher:
         if now - self._last_metrics < self._metrics_throttle:
             return False
         self._last_metrics = now
-        self._hub.publish(StreamEvent(type="metrics", data=build()))
+        data = build()
+        # Permite al cliente rechazar un snapshot viejo que haya quedado en tránsito mientras
+        # GET /demo ya devolvió un scenario_run_id nuevo (carrera entre transportes).
+        data["asof_monotonic"] = now
+        self._hub.publish(StreamEvent(type="metrics", data=data))
         return True
 
     def publish_pnl(self, build: Callable[[], dict[str, Any]]) -> bool:

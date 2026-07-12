@@ -6,11 +6,18 @@ robustez del controlador.
 """
 from __future__ import annotations
 
+import pytest
+
 from app.backtest import Recorder
 from app.config import get_settings
 from app.demo import DemoFallback, JuryScenarioPlayer
+from app.demo.scenarios import (
+    ORDER_FAILURE_NO_CLAIM,
+    REPEATS_PER_SCENARIO,
+    build_jury_scenarios,
+)
 from app.engine.explain import build_opportunity_explanation
-from app.models.enums import OpportunityStatus, Strategy
+from app.models.enums import DiscardReason, OpportunityStatus, Strategy
 from app.models.market import NormalizedBook
 from app.models.opportunity import Opportunity
 from app.state import AppState
@@ -146,6 +153,127 @@ def test_jury_player_cycles_all_required_scenarios():
         "order_failure",
     ]
     assert names[7] == "good_edge"
+
+
+# ---- PRD-013: identidad de activación (scenario_run_id) y cadencia ----
+
+def test_scenario_run_id_increments_on_transition_and_same_name_reselection():
+    sink: list[NormalizedBook] = []
+    fb = _fallback(_settings(), None, sink)
+    fb.set_mode("jury")
+    fb.tick(now=100.0)
+    st = fb.status()
+    assert st["scenario"] == "good_edge"
+    assert st["scenario_run_id"] == 0
+    assert st["scenario_started_at"] == 100.0
+    # Transición natural del player (auto-avance tras agotar las repeticiones).
+    for i in range(REPEATS_PER_SCENARIO):
+        fb.tick(now=101.0 + i)
+    st2 = fb.status()
+    assert st2["scenario"] == "naive_trap"
+    assert st2["scenario_run_id"] == 1
+    # Re-selección explícita del MISMO nombre → nueva activación → nuevo run_id.
+    assert fb.select_jury_scenario("naive_trap") is True
+    fb.tick(now=500.0)
+    st3 = fb.status()
+    assert st3["scenario"] == "naive_trap"
+    assert st3["scenario_run_id"] == 2
+    assert st3["scenario_started_at"] == 500.0
+
+
+def test_repeated_frames_keep_scenario_run_id():
+    sink: list[NormalizedBook] = []
+    fb = _fallback(_settings(), None, sink)
+    fb.set_mode("jury")
+    fb.tick(now=100.0)
+    fb.tick(now=100.5)
+    fb.tick(now=101.0)
+    st = fb.status()
+    # Frames repetidos del mismo escenario conservan identidad Y started_at del PRIMER frame.
+    assert st["scenario"] == "good_edge"
+    assert st["scenario_run_id"] == 0
+    assert st["scenario_started_at"] == 100.0
+
+
+def test_scenario_change_is_published_before_its_books_are_injected():
+    """El SSE demo debe preceder opportunity/metrics producidos síncronamente por inject."""
+    events: list[tuple[str, int | str | None]] = []
+    settings = _settings()
+    fb = DemoFallback(
+        _state(settings),
+        settings,
+        inject=lambda nb: events.append(("inject", nb.exchange)),
+        on_change=lambda st: events.append(("change", st.get("scenario_run_id"))),
+    )
+    fb.set_mode("jury")
+    fb.tick(now=100.0)
+    # También en la PRIMERA activación: el demo con run_id=0 precede a sus books.
+    # (_activate emite antes un change transitorio con run_id=None; el cliente lo
+    # descarta por run_id nulo — lo que importa es que 0 llegue antes del primer inject.)
+    run0_change = events.index(("change", 0))
+    first_inject = next(i for i, ev in enumerate(events) if ev[0] == "inject")
+    assert run0_change < first_inject
+    # Frame REPETIDO del mismo escenario: inyecta books pero NO re-publica demo
+    # (un evento demo duplicado con el mismo run_id sería ruido, no identidad nueva).
+    events.clear()
+    fb.tick(now=100.5)
+    assert all(ev[0] == "inject" for ev in events)
+    assert any(ev[0] == "inject" for ev in events)
+    # Consumir el resto de good_edge; el siguiente tick abre naive_trap.
+    for i in range(REPEATS_PER_SCENARIO - 2):
+        fb.tick(now=101.0 + i)
+    events.clear()
+    fb.tick(now=200.0)
+
+    assert events[0] == ("change", 1)
+    assert events[1][0] == "inject"
+
+
+def test_jury_window_is_longer_than_two_metrics_intervals():
+    """Cadencia mínima RF-002: duración >= 2×metrics_emit_ms + 250 ms garantiza una baseline
+    de métricas y al menos una muestra POSTERIOR dentro de la misma activación."""
+    s = get_settings()
+    duration_ms = REPEATS_PER_SCENARIO * s.demo_replay_interval_ms
+    assert duration_ms >= 2 * s.metrics_emit_ms + 250
+
+
+# ---- PRD-013: catálogo de contratos esperado→observable (los 7 escenarios) ----
+
+# Tabla de contratos del PRD-013: señal verificable o claim retirado explícito (RF-003B).
+JURY_CONTRACTS = {
+    "good_edge": "captured",
+    "naive_trap": "not_profitable_fees",
+    "peg_adverse": "peg_adverse",
+    "stale_feed": "stale_data_excluded",
+    "latency_decay": "slippage_over_limit",
+    "thin_book": "thin_book",
+    "order_failure": ORDER_FAILURE_NO_CLAIM,
+}
+
+
+def test_jury_catalog_matches_contract_table_exactly():
+    names = [s.name for s in build_jury_scenarios()]
+    assert names == list(JURY_CONTRACTS)
+
+
+@pytest.mark.parametrize("name", list(JURY_CONTRACTS))
+def test_jury_scenario_declares_verifiable_contract(name):
+    scenario = {s.name: s for s in build_jury_scenarios()}[name]
+    assert scenario.expected_result == JURY_CONTRACTS[name]
+    if name == "order_failure":
+        # RF-003B: claim retirado — nunca promete preflight/test-order (el player sólo
+        # construye books; el fallback jamás invoca ejecución).
+        assert "preflight" not in scenario.expected_result
+        assert "test_order" not in scenario.expected_result
+    elif name == "good_edge":
+        # Señal: opportunity.status=captured (evento) / delta metrics.captured (respaldo).
+        assert scenario.expected_result == OpportunityStatus.captured.value
+    elif name == "stale_feed":
+        # Señal: estado feed/breaker stale, no un DiscardReason; el fixture inyecta stale.
+        assert scenario.stale is True
+    else:
+        # Señal: discard_reason homónimo del pipeline (evento + delta en discard_reasons).
+        assert scenario.expected_result in {r.value for r in DiscardReason}
 
 
 # ---- inyección re-sellada (fresca) ----

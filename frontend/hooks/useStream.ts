@@ -35,6 +35,9 @@ export interface Opportunity {
   status: string;
   discard_reason: string | null;
   latency_ms: number | null;
+  /** Monotónico del proceso backend (ingesta): comparable con `scenario_started_at`
+   * (PRD-013). Ya viaja en el SSE (model_dump del backend); aquí sólo se tipa. */
+  t_recv?: number | null;
   legs?: StrategyLeg[] | null;
   strategy_payload?: Record<string, unknown>;
 }
@@ -104,6 +107,8 @@ export interface StageLatency {
 }
 
 export interface Metrics {
+  /** Reloj monotónico al construir el evento SSE. GET /metrics puede omitirlo. */
+  asof_monotonic?: number;
   detected: number;
   viable: number;
   executable: number;
@@ -167,6 +172,227 @@ export interface DemoStatus {
   expected_result?: string | null;
   scenario_index?: number;
   n_scenarios?: number;
+  /** Identidad de activación (PRD-013): monotónico por proceso backend; `scenario` y
+   * `scenario_index` se repiten en cada ciclo y NUNCA sirven de clave. */
+  scenario_run_id?: number | null;
+  /** Reloj monotónico del backend al primer frame; comparable con `Opportunity.t_recv`. */
+  scenario_started_at?: number | null;
+}
+
+/** PRD-013 — ventana de observación `esperado → observado` de UNA activación jury.
+ * El estado vive sólo en el frontend (useRef en useStream); la UI recibe snapshots
+ * inmutables y NO recalcula nada. */
+export type ScenarioObservationStatus = 'pending' | 'observed' | 'absent';
+export type ScenarioObservationDetail =
+  | 'awaiting_evidence'
+  | 'no_claim'
+  | 'no_effect'
+  | 'telemetry_restarted'
+  | 'telemetry_insufficient'
+  | 'evidence_inconsistent';
+
+export interface ScenarioObservationWindow {
+  runId: number;
+  scenario: string | null;
+  expectedReason: string | null;
+  backendStartedAt: number | null;
+  /** null hasta copiar el PRIMER snapshot SSE de métricas POSTERIOR a abrir la ventana.
+   * Nunca `{}` ni el último acumulado conocido (convertirían historia en delta). */
+  baselineReasons: Record<string, number> | null;
+  latestReasons: Record<string, number>;
+  /** Evidencia primaria: eventos `opportunity` con `t_recv >= backendStartedAt`. La clave
+   * `captured` cuenta status=captured (good_edge); el resto son `discard_reason`. */
+  directReasons: Record<string, number>;
+  /** Sólo eventos posteriores a fijar la baseline: única fuente temporalmente
+   * equivalente al delta de métricas. */
+  directReasonsSinceBaseline: Record<string, number>;
+  baselineCaptured: number | null;
+  latestCaptured: number;
+  postBaselineMetricSamples: number;
+  directSamples: number;
+  /** stale_feed (mínimo RF-002.5): estado feed/breaker COPIADO con su timestamp; no se
+   * afirma que la activación lo causó (la transición posterior es stretch). */
+  staleSignal: { active: boolean; since: number | null } | null;
+  telemetryRestarted: boolean;
+  status: ScenarioObservationStatus;
+  detail: ScenarioObservationDetail | null; // null sólo cuando status=observed
+}
+
+/** RF-003B: contrato literal de `order_failure` (claim de ejecución retirado). Debe ser
+ * idéntico a `ORDER_FAILURE_NO_CLAIM` del backend (app/demo/scenarios.py). */
+export const SCENARIO_NO_CLAIM = 'sin claim de ejecución; sólo books deterministas';
+
+function evaluateScenarioWindow(w: ScenarioObservationWindow): void {
+  // RF-003B / RF-001.2: sin claim → `absent` honesto SIEMPRE; nunca se infiere éxito.
+  if (w.expectedReason == null || w.expectedReason === SCENARIO_NO_CLAIM) {
+    w.status = 'absent';
+    w.detail = 'no_claim';
+    return;
+  }
+  if (w.scenario === 'stale_feed') {
+    // Fuente aplicable: UNA muestra feed/breaker; no se exige oportunidad ni delta
+    // (el propio comportamiento del escenario los evita).
+    if (w.staleSignal?.active) { w.status = 'observed'; w.detail = null; return; }
+    if (w.staleSignal != null || w.postBaselineMetricSamples >= 1) {
+      w.status = 'absent';
+      w.detail = 'no_effect';
+      return;
+    }
+    w.status = 'pending';
+    w.detail = 'awaiting_evidence';
+    return;
+  }
+  const key = w.expectedReason;
+  const direct = w.directReasons[key] ?? 0;
+  const directSince = w.directReasonsSinceBaseline[key] ?? 0;
+  let delta: number | null = null;
+  if (w.baselineReasons != null && w.postBaselineMetricSamples > 0) {
+    delta = key === 'captured'
+      ? w.latestCaptured - (w.baselineCaptured ?? 0)
+      : (w.latestReasons[key] ?? 0) - (w.baselineReasons[key] ?? 0);
+  }
+  // Fuentes temporalmente equivalentes que discrepan: el delta atribuye MÁS de lo que el
+  // canal directo vio tras la baseline (eventos SSE perdidos o atribución cruzada) →
+  // `absent`, nunca se conserva éxito. delta <= directSince es lag normal del throttle.
+  if (delta != null && directSince > 0 && delta > directSince) {
+    w.status = 'absent';
+    w.detail = 'evidence_inconsistent';
+    return;
+  }
+  if (direct > 0) { w.status = 'observed'; w.detail = null; return; }
+  // Delta sin evento directo equivalente: los acumulados no llevan timestamp por
+  // incremento (una cola anterior pudo vaciarse tras abrir la ventana) → no cuenta.
+  if (delta != null && delta > 0) {
+    w.status = 'absent';
+    w.detail = 'telemetry_insufficient';
+    return;
+  }
+  if (w.postBaselineMetricSamples >= 1) { w.status = 'absent'; w.detail = 'no_effect'; return; }
+  if (w.telemetryRestarted) { w.status = 'absent'; w.detail = 'telemetry_restarted'; return; }
+  w.status = 'pending';
+  w.detail = 'awaiting_evidence';
+}
+
+function newScenarioWindow(d: DemoStatus, breakers: BreakerStatus): ScenarioObservationWindow {
+  const w: ScenarioObservationWindow = {
+    runId: d.scenario_run_id ?? 0,
+    scenario: d.scenario ?? null,
+    expectedReason: d.expected_result ?? null,
+    backendStartedAt: d.scenario_started_at ?? null,
+    baselineReasons: null,
+    latestReasons: {},
+    directReasons: {},
+    directReasonsSinceBaseline: {},
+    baselineCaptured: null,
+    latestCaptured: 0,
+    postBaselineMetricSamples: 0,
+    directSamples: 0,
+    staleSignal: null,
+    telemetryRestarted: false,
+    status: 'pending',
+    detail: 'awaiting_evidence',
+  };
+  if (w.scenario === 'stale_feed') {
+    // Mínimo RF-002.5: copiar el estado feed/breaker VIGENTE (con su timestamp).
+    const stale = breakers.breakers.find((b) => b.type === 'stale_data');
+    if (stale) w.staleSignal = { active: stale.active, since: stale.since };
+  }
+  evaluateScenarioWindow(w);
+  return w;
+}
+
+function applyMetricsToScenarioWindow(w: ScenarioObservationWindow, m: Metrics): void {
+  // El poll de /demo y SSE son transportes independientes: un snapshot emitido antes del
+  // cambio puede entregarse después de que el poll abra la ventana. Sin este corte temporal
+  // no es una baseline segura. Un backend antiguo sin sello queda visible como insuficiente.
+  if (
+    w.backendStartedAt == null
+    || typeof m.asof_monotonic !== 'number'
+    || m.asof_monotonic < w.backendStartedAt
+  ) {
+    w.status = 'absent';
+    w.detail = 'telemetry_insufficient';
+    return;
+  }
+  const reasons = m.discard_reasons ?? {};
+  if (w.baselineReasons == null) {
+    // Primer snapshot POSTERIOR a abrir la ventana → baseline COPIADA (no referenciada);
+    // claves ausentes valen 0 al calcular el delta. La baseline no cuenta como muestra.
+    w.baselineReasons = { ...reasons };
+    w.baselineCaptured = m.captured;
+    w.latestReasons = { ...reasons };
+    w.latestCaptured = m.captured;
+    w.directReasonsSinceBaseline = {};
+  } else {
+    const keys = new Set([...Object.keys(w.baselineReasons), ...Object.keys(reasons)]);
+    let restarted = m.captured < (w.baselineCaptured ?? 0);
+    for (const k of keys) {
+      if ((reasons[k] ?? 0) < (w.baselineReasons[k] ?? 0)) restarted = true;
+    }
+    if (restarted) {
+      // Delta negativo = reinicio/resync del backend: la muestra pasa a ser la NUEVA
+      // baseline y la evidencia previa se descarta; nunca se muestra un número negativo.
+      w.baselineReasons = { ...reasons };
+      w.baselineCaptured = m.captured;
+      w.latestReasons = { ...reasons };
+      w.latestCaptured = m.captured;
+      w.directReasons = {};
+      w.directReasonsSinceBaseline = {};
+      w.directSamples = 0;
+      w.postBaselineMetricSamples = 0;
+      w.telemetryRestarted = true;
+    } else {
+      w.latestReasons = { ...reasons };
+      w.latestCaptured = m.captured;
+      w.postBaselineMetricSamples += 1;
+    }
+  }
+  evaluateScenarioWindow(w);
+}
+
+function applyOpportunityToScenarioWindow(
+  w: ScenarioObservationWindow,
+  o: Opportunity,
+): boolean {
+  // Corte monotónico: sin t_recv o anterior al arranque del escenario → book del escenario
+  // previo que seguía en la cola del motor; no se atribuye.
+  if (w.backendStartedAt == null || typeof o.t_recv !== 'number') return false;
+  if (o.t_recv < w.backendStartedAt) return false;
+  w.directSamples += 1;
+  const key = o.status === 'captured' ? 'captured' : o.discard_reason;
+  if (key) {
+    w.directReasons[key] = (w.directReasons[key] ?? 0) + 1;
+    if (w.baselineReasons != null) {
+      w.directReasonsSinceBaseline[key] = (w.directReasonsSinceBaseline[key] ?? 0) + 1;
+    }
+  }
+  evaluateScenarioWindow(w);
+  return true;
+}
+
+function applyBreakersToScenarioWindow(
+  w: ScenarioObservationWindow,
+  b: BreakerStatus,
+): boolean {
+  if (w.scenario !== 'stale_feed') return false;
+  const stale = b.breakers.find((x) => x.type === 'stale_data');
+  w.staleSignal = stale
+    ? { active: stale.active, since: stale.since }
+    : { active: b.active.includes('stale_data'), since: null };
+  evaluateScenarioWindow(w);
+  return true;
+}
+
+/** Snapshot inmutable para la UI (los records internos se mutan en el ref). */
+function snapshotScenarioWindow(w: ScenarioObservationWindow): ScenarioObservationWindow {
+  return {
+    ...w,
+    baselineReasons: w.baselineReasons ? { ...w.baselineReasons } : null,
+    latestReasons: { ...w.latestReasons },
+    directReasons: { ...w.directReasons },
+    directReasonsSinceBaseline: { ...w.directReasonsSinceBaseline },
+    staleSignal: w.staleSignal ? { ...w.staleSignal } : null,
+  };
 }
 
 /** Inventario & rebalanceo (PRD-012): contratos de GET /balances y la sección de /pnl.
@@ -531,6 +757,8 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const [balancesError, setBalancesError] = useState(false);
   const [balancesUpdatedAt, setBalancesUpdatedAt] = useState<number | null>(null);
   const [decisionCost, setDecisionCost] = useState<DecisionRebalanceCost | null>(null);
+  // PRD-013: snapshot inmutable de la ventana de observación jury para la UI.
+  const [scenarioWindow, setScenarioWindow] = useState<ScenarioObservationWindow | null>(null);
 
   const quotesBuf = useRef<Record<string, Quote>>({});
   const oppsBuf = useRef<Opportunity[]>([]);
@@ -542,6 +770,14 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
   const dirtyQuotes = useRef(false);
   const dirtyOpps = useRef(false);
   const dirtyMetrics = useRef(false);
+  // PRD-013: dueño ÚNICO del estado de la ventana (identidad, baseline, deltas, directos).
+  const scenarioWinRef = useRef<ScenarioObservationWindow | null>(null);
+  const dirtyScenario = useRef(false);
+  // Tras un corte SSE no se acepta evidencia hasta confirmar por /demo (o SSE demo) qué
+  // run_id sigue vigente; durante el hueco pudo ocurrir una o varias transiciones.
+  const scenarioNeedsDemoResync = useRef(false);
+  // Espejo del último BreakerStatus para sembrar la muestra "vigente" de stale_feed.
+  const breakersRef = useRef<BreakerStatus>(EMPTY_BREAKERS);
   // Params actuales accesibles desde closures estables (retryHeavy) sin recrear el SSE.
   const paramsRef = useRef(strategyParams);
   paramsRef.current = strategyParams;
@@ -665,6 +901,54 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     // (projection/capacity/forward/survival) las dispara el effect de params (pullHeavy).
     retryValidation();
 
+    // PRD-013: el run_id llega por DOS transportes (evento SSE `demo` — sólo al cambiar —
+    // y el poll backstop de GET /demo); la ventana se abre con el primer valor nuevo que se
+    // vea, venga por donde venga. Ambos pasan por status() → valores idénticos.
+    const applyDemo = (d: DemoStatus) => {
+      setDemo(d);
+      const w = scenarioWinRef.current;
+      if (!d.active || d.mode !== 'jury' || d.scenario_run_id == null) {
+        // Salir de jury / demo inactiva → la ventana y su evidencia se invalidan.
+        if (w != null) {
+          scenarioWinRef.current = null;
+          dirtyScenario.current = true;
+        }
+        scenarioNeedsDemoResync.current = false;
+        return;
+      }
+      if (
+        w == null
+        || w.runId !== d.scenario_run_id
+        || w.backendStartedAt !== (d.scenario_started_at ?? null)
+      ) {
+        // started_at distingue también un proceso nuevo cuyo primer run_id=0 coincide por
+        // casualidad con el 0 que el cliente ya tenía antes de la reconexión.
+        scenarioWinRef.current = newScenarioWindow(d, breakersRef.current);
+        dirtyScenario.current = true;
+      }
+      scenarioNeedsDemoResync.current = false;
+    };
+    const applyBreakers = (b: BreakerStatus) => {
+      breakersRef.current = b;
+      setBreakers(b);
+      const w = scenarioWinRef.current;
+      if (w && applyBreakersToScenarioWindow(w, b)) dirtyScenario.current = true;
+    };
+
+    const ac = new AbortController();
+    // Evita que una respuesta de poll iniciada antes de un evento SSE más nuevo haga
+    // retroceder el run_id. Varias llamadas concurrentes conservan sólo la última.
+    let demoRevision = 0;
+    let demoRequestSeq = 0;
+    const resyncDemo = () => {
+      const requestSeq = ++demoRequestSeq;
+      const revision = demoRevision;
+      fetchJson<DemoStatus>(`${API_BASE}/api/v1/demo`, { signal: ac.signal })
+        .then((d) => {
+          if (requestSeq === demoRequestSeq && revision === demoRevision) applyDemo(d);
+        })
+        .catch(() => undefined);
+    };
     const es = new EventSource(`${API_BASE}/api/v1/stream`);
     // Cada evento recibido "toca" el watchdog; si estábamos en `stale`, volvemos a `live`.
     const touch = () => {
@@ -674,10 +958,32 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     es.onopen = () => {
       lastEventRef.current = Date.now();
       setStatus('live');
+      // También en reconexión: no esperar hasta 5 s (un escenario dura 2.25 s).
+      resyncDemo();
     };
     // EventSource reintenta solo; reflejamos "reconnecting" sólo si la conexión se cerró.
     es.onerror = () => {
-      if (es.readyState !== EventSource.OPEN) setStatus('reconnecting');
+      if (es.readyState !== EventSource.OPEN) {
+        setStatus('reconnecting');
+        scenarioNeedsDemoResync.current = true;
+        const w = scenarioWinRef.current;
+        if (w) {
+          // La identidad puede haber cambiado durante el hueco. El poll abrirá una ventana
+          // nueva o confirmará ésta; hasta entonces no se conserva evidencia anterior.
+          w.baselineReasons = null;
+          w.latestReasons = {};
+          w.directReasons = {};
+          w.directReasonsSinceBaseline = {};
+          w.baselineCaptured = null;
+          w.latestCaptured = 0;
+          w.postBaselineMetricSamples = 0;
+          w.directSamples = 0;
+          w.telemetryRestarted = false;
+          w.status = 'absent';
+          w.detail = 'telemetry_insufficient';
+          dirtyScenario.current = true;
+        }
+      }
     };
     // Watchdog de staleness: socket abierto pero sin eventos >10s ⇒ "EN VIVO" mentiría.
     const watchdog = setInterval(() => {
@@ -739,6 +1045,14 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       s.lastOpportunityId = o.id;
       routeStatsRef.current.set(key, s);
       dirtyOpps.current = true;
+
+      // PRD-013: evidencia primaria de la ventana jury (corte por t_recv monotónico).
+      const win = scenarioWinRef.current;
+      if (
+        !scenarioNeedsDemoResync.current
+        && win
+        && applyOpportunityToScenarioWindow(win, o)
+      ) dirtyScenario.current = true;
     });
 
     es.addEventListener('metrics', (e) => {
@@ -747,6 +1061,12 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       if (!m) return;
       metricsBuf.current = m;
       dirtyMetrics.current = true;
+      // PRD-013: baseline (primer snapshot posterior) y delta de la ventana jury.
+      const w = scenarioWinRef.current;
+      if (!scenarioNeedsDemoResync.current && w) {
+        applyMetricsToScenarioWindow(w, m);
+        dirtyScenario.current = true;
+      }
     });
 
     // P&L en tiempo real (push tras cada ejecución, throttled). Antes era polling /pnl cada 2s.
@@ -760,14 +1080,17 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     es.addEventListener('breaker', (e) => {
       touch();
       const b = parseEvent<BreakerStatus>(e);
-      if (b) setBreakers(b);
+      if (b) applyBreakers(b);
     });
     // `status` refleja SÓLO la conectividad SSE (onopen/onerror); el badge "DEMO DATA" se
     // deriva de `demo.active` en la página (evita que un reconnect pise el estado de demo).
     es.addEventListener('demo', (e) => {
       touch();
       const d = parseEvent<DemoStatus>(e);
-      if (d) setDemo(d);
+      if (d) {
+        demoRevision += 1;
+        applyDemo(d);
+      }
     });
 
     let raf = 0;
@@ -788,6 +1111,11 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
         dirtyMetrics.current = false;
         if (metricsBuf.current) setMetrics(metricsBuf.current);
       }
+      if (dirtyScenario.current) {
+        dirtyScenario.current = false;
+        const w = scenarioWinRef.current;
+        setScenarioWindow(w ? snapshotScenarioWindow(w) : null);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -795,14 +1123,13 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     // Estado inicial de breakers/demo (sin esperar al primer cambio) + polling de P&L.
     // AbortController: cancela los fetch en vuelo al desmontar (evita setState huérfano,
     // relevante bajo StrictMode que monta→desmonta→monta).
-    const ac = new AbortController();
     // P&L, breakers y demo llegan por SSE (push). Este pull es sólo BACKSTOP de baja
     // frecuencia: estado inicial antes del primer evento + resync si se perdió un push.
     const pullLight = () => {
       const opt = { signal: ac.signal };
       fetchJson<Pnl>(`${API_BASE}/api/v1/pnl`, opt).then(setPnl).catch(() => undefined);
-      fetchJson<BreakerStatus>(`${API_BASE}/api/v1/control/status`, opt).then(setBreakers).catch(() => undefined);
-      fetchJson<DemoStatus>(`${API_BASE}/api/v1/demo`, opt).then(setDemo).catch(() => undefined);
+      fetchJson<BreakerStatus>(`${API_BASE}/api/v1/control/status`, opt).then(applyBreakers).catch(() => undefined);
+      resyncDemo();
       // Agregado de sesión: barato (suma sobre recent_opps) → con el poll ligero de 5s.
       fetchJson<NaiveVsEdgeReport>(`${API_BASE}/api/v1/analysis/naive-vs-edge`, opt)
         .then(setNaiveVsEdge)
@@ -844,6 +1171,9 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
       cancelAnimationFrame(raf);
       clearInterval(pollLight);
       clearInterval(watchdog);
+      // PRD-013: desmontar el hook borra la ventana (nunca sobrevive evidencia huérfana).
+      scenarioWinRef.current = null;
+      scenarioNeedsDemoResync.current = false;
     };
   }, [retryValidation, pullBalances]);
 
@@ -881,6 +1211,6 @@ export function useStream(strategyParams: StrategyLabParams = DEFAULT_STRATEGY_P
     metrics, breakers, demo, pnl, validation, projection, capacity, forward, survival, naiveVsEdge,
     wins, errors, retryValidation, retryHeavy,
     balances, balancesLoading, balancesError, balancesUpdatedAt,
-    retryBalances, decisionCost,
+    retryBalances, decisionCost, scenarioWindow,
   };
 }

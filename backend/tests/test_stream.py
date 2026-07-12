@@ -93,3 +93,16 @@ async def test_publish_opportunity_event():
     assert ev.data["strategy"] == "spatial"      # enum serializado a str
     assert ev.data["status"] == "detected"
     await gen.aclose()
+
+
+async def test_publish_metrics_stamps_monotonic_snapshot():
+    hub = StreamHub()
+    pub = StreamPublisher(hub, metrics_throttle_ms=0)
+    gen = hub.subscribe()
+    task = asyncio.create_task(gen.__anext__())
+    await asyncio.sleep(0)
+    assert pub.publish_metrics(lambda: {"captured": 0, "discard_reasons": {}}) is True
+    ev = await asyncio.wait_for(task, 1.0)
+    assert ev.type == "metrics"
+    assert isinstance(ev.data["asof_monotonic"], float)
+    await gen.aclose()

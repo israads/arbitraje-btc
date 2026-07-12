@@ -10,6 +10,18 @@ from dataclasses import dataclass
 
 from ..models.market import NormalizedBook
 
+# Cadencia mínima de la ventana de observación (PRD-013 RF-002): la duración por escenario
+# debe garantizar una baseline de métricas Y una muestra posterior dentro de la activación:
+#   repeats × demo_replay_interval_ms >= 2 × metrics_emit_ms + 250 ms
+# Con los defaults (50 ms de replay, 1000 ms de métricas) el mínimo es 45 (2.25 s).
+REPEATS_PER_SCENARIO = 45
+
+# RF-003B (PRD-013, decisión por defecto): `order_failure` NO ejerce ejecución — el player
+# sólo inyecta books y el fallback nunca invoca preflight/test-order. El contrato promete
+# EXACTAMENTE lo que la demo muestra; el rechazo pre-trade lo demuestra `thin_book` y el
+# unwind se demuestra vía replay/backtest (RF-004), nunca aquí.
+ORDER_FAILURE_NO_CLAIM = "sin claim de ejecución; sólo books deterministas"
+
 
 @dataclass(frozen=True)
 class PegUpdate:
@@ -85,6 +97,7 @@ def build_jury_scenarios() -> tuple[JuryScenario, ...]:
                 _book("kraken", bid=63_600.0, ask=63_620.0, ts=1_700_000_000_001.0),
             ),
             peg_updates=(PegUpdate("USDT", 1.0),),
+            expected_result="captured",
         ),
         JuryScenario(
             name="naive_trap",
@@ -94,6 +107,7 @@ def build_jury_scenarios() -> tuple[JuryScenario, ...]:
                 _book("kraken", bid=63_100.0, ask=63_120.0, ts=1_700_000_000_002.0),
             ),
             peg_updates=(PegUpdate("USDT", 1.0),),
+            expected_result="not_profitable_fees",
         ),
         JuryScenario(
             name="peg_adverse",
@@ -117,6 +131,7 @@ def build_jury_scenarios() -> tuple[JuryScenario, ...]:
                 ),
             ),
             peg_updates=(PegUpdate("USDT", 0.985),),
+            expected_result="peg_adverse",
         ),
         JuryScenario(
             name="stale_feed",
@@ -127,6 +142,9 @@ def build_jury_scenarios() -> tuple[JuryScenario, ...]:
             ),
             peg_updates=(PegUpdate("USDT", 1.0),),
             stale=True,
+            # Señal: estado feed/breaker stale (NO un DiscardReason); la ausencia de
+            # oportunidad por sí sola no prueba el claim (PRD-013, tabla de contratos).
+            expected_result="stale_data_excluded",
         ),
         JuryScenario(
             name="latency_decay",
@@ -177,9 +195,12 @@ def build_jury_scenarios() -> tuple[JuryScenario, ...]:
         ),
         JuryScenario(
             name="order_failure",
+            # RF-003B: reformulado. Antes prometía `preflight_or_test_order_reject`, pero el
+            # fallback SÓLO inyecta books: nunca invoca preflight ni test-order. El claim se
+            # retira; badge en UI: `NO EJERCE EJECUCIÓN`.
             description=(
-                "Ruta con Binance para validar rechazo de preflight/test-order "
-                "sin dinero real."
+                "NO EJERCE EJECUCIÓN: ruta con Binance sólo con books deterministas; "
+                "preflight/test-order no se invoca en esta demo."
             ),
             books=(
                 _book(
@@ -193,7 +214,7 @@ def build_jury_scenarios() -> tuple[JuryScenario, ...]:
                 _book("kraken", bid=63_650.0, ask=63_680.0, ts=1_700_000_000_007.0),
             ),
             kind="execution",
-            expected_result="preflight_or_test_order_reject",
+            expected_result=ORDER_FAILURE_NO_CLAIM,
             peg_updates=(PegUpdate("USDT", 1.0),),
         ),
     )
@@ -210,7 +231,7 @@ class JuryScenarioPlayer:
         self,
         scenarios: tuple[JuryScenario, ...] | None = None,
         *,
-        repeats_per_scenario: int = 10,
+        repeats_per_scenario: int = REPEATS_PER_SCENARIO,
     ) -> None:
         self._scenarios = scenarios or build_jury_scenarios()
         self._repeats = max(1, repeats_per_scenario)
