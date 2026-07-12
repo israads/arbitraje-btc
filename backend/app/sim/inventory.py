@@ -38,6 +38,7 @@ Determinista: sin red ni reloj en el cómputo; el `ts` de los snapshots se inyec
 """
 from __future__ import annotations
 
+import logging
 import math
 from collections import deque
 from typing import Any
@@ -49,6 +50,8 @@ from ..models.enums import LegSide
 from ..models.execution import Execution, Leg
 from ..models.market import NormalizedBook
 from ..models.opportunity import Opportunity
+
+log = logging.getLogger("app.sim.inventory")
 
 # BTC neto por debajo de este umbral se considera plano (ruido de coma flotante).
 _DUST = 1e-12
@@ -210,8 +213,9 @@ class Portfolio:
         (`insufficient_balance`) al agotarse capital/inventario.
 
         Usa la `q_target` (cantidad efectiva por profundidad que fijó C6) y el `vwap_buy`
-        recorrido. Venue NO sembrado → no bloquea (consistente con `apply_execution`, que ignora
-        venues desconocidos sin romper la conservación). `q`/`vwap` no finitos → no afford.
+        recorrido. Venue NO sembrado → NO afford (PRD-009 RF-001): sin ambos venues en el
+        ledger no hay asiento posible, así que la opp se descarta (`insufficient_balance`)
+        antes de simular. `q`/`vwap` no finitos → no afford.
 
         CONSERVADOR (no deja balances negativos): `walk_book` recorta el fill a `q_target` en
         cada pata (`take = min(qty, q − acc)`), así el simulador consume ≤ `q_target` BTC en la
@@ -219,6 +223,11 @@ class Portfolio:
         cota SUPERIOR del consumo real. El orden serial de `on_opp` (C7) hace que el saldo ya
         esté debitado por la opp anterior cuando se evalúa la siguiente → se materializa
         "ejecuta por score desc hasta agotar capital/inventario" sin reservas explícitas."""
+        # PRD-009 RF-001: AMBOS venues deben existir en el ledger antes de mirar coste/saldo.
+        buy_vb = self.venues.get(opp.buy_venue)
+        sell_vb = self.venues.get(opp.sell_venue)
+        if buy_vb is None or sell_vb is None:
+            return False
         q = opp.q_target
         if q is None or q == 0.0:
             q = self.settings.default_trade_qty_btc
@@ -226,10 +235,6 @@ class Portfolio:
         # corrupto: no se opera sobre ello (no se enmascara con el default).
         if not math.isfinite(q) or q <= 0.0:
             return False
-        buy_vb = self.venues.get(opp.buy_venue)
-        sell_vb = self.venues.get(opp.sell_venue)
-        if buy_vb is None or sell_vb is None:
-            return True  # venue desconocido: no inventamos un bloqueo (no se sembró)
         vb_px = opp.vwap_buy
         vwap_buy = vb_px if (vb_px and math.isfinite(vb_px) and vb_px > 0.0) else 0.0
         cost_quote = q * vwap_buy * (1.0 + self._fee_taker(opp.buy_venue))
@@ -344,8 +349,21 @@ class Portfolio:
         fee = leg.fee if math.isfinite(leg.fee) and leg.fee >= 0.0 else 0.0
         return qty, vwap, fee
 
-    def apply_execution(self, execution: Execution) -> None:
+    def apply_execution(self, execution: Execution) -> bool:
         """Aplica un `Execution` a los balances con DOBLE ENTRADA y acumula realized P&L.
+        TRANSACCIONAL (PRD-009 RF-002): valida TODAS las patas antes de mutar y devuelve
+
+          · `True`  — todos los efectos válidos se aplicaron y, si es finito, el P&L se
+                      acumuló exactamente una vez.
+          · `False` — ejecución RECHAZADA: el estado contable ({btc, quote, open_btc,
+                      open_cost_basis_usd} por venue + realized_pnl) queda idéntico al de
+                      entrada. Cero mutación, cero P&L.
+
+        Tres fases SIN await (atómica frente al event loop): (1) preparar y validar — toda
+        pata con qty saneada > 0 y el leg risk aplicable deben apuntar a venues del ledger,
+        una referencia ausente rechaza SIN mutar; (2) aplicar sobre estado protegido con
+        snapshot previo de los campos contables; (3) confirmar, o restaurar el snapshot
+        completo ante una excepción inesperada.
 
         Mueve los balances FÍSICOS por el `qty_filled` COMPLETO de cada leg (matched +
         excedente): comprar −quote +btc; vender +quote −btc. Esto garantiza la conservación
@@ -356,35 +374,80 @@ class Portfolio:
         risk (`leg_risk_qty` a `leg_risk_entry_vwap`, en `leg_risk_venue`/`leg_risk_side`):
         el tramo CASADO es un par cerrado cuyo P&L ya viene en `realized_pnl` y NO se
         re-cuenta vía mark-to-market (si no, se duplicaría el spread del matched)."""
-        # 1) Balances físicos por el fill completo de cada leg (conservación exacta).
+        # 1) Preparar y validar: cada pata con fill efectivo debe tener venue en el ledger.
+        moves: list[tuple[VenueBalance, LegSide, float, float, float]] = []
+        missing: list[str] = []
         for leg in execution.legs:
-            vb = self._venue(leg.venue)
-            if vb is None:
-                continue  # venue desconocido (no sembrado): se ignora, no rompe balances
             qty, vwap, fee = self._leg_amounts(leg)
             if qty <= 0.0:
                 continue
-            vb.move_physical(leg.side, qty, vwap, fee)
-
-        # 2) Posición ABIERTA: SÓLO el excedente de leg risk (no casado) con su coste base.
-        #    El tramo casado NO se registra como abierto (su P&L ya está en realized).
+            vb = self._venue(leg.venue)
+            if vb is None:
+                missing.append(leg.venue)
+                continue
+            moves.append((vb, leg.side, qty, vwap, fee))
+        if missing:
+            log.warning(
+                "apply_execution rechazada execution_id=%s opportunity_id=%s phase=leg "
+                "missing_venues=%s",
+                execution.id, execution.opportunity_id, sorted(set(missing)),
+            )
+            return False
+        # Leg risk aplicable (mismas condiciones que lo hacían efectivo): su venue también
+        # debe existir; una referencia ausente rechaza la ejecución completa.
         lr_qty = execution.leg_risk_qty
+        lr_side = execution.leg_risk_side
+        lr_vb: VenueBalance | None = None
         if (
             execution.leg_risk_venue is not None
-            and execution.leg_risk_side is not None
+            and lr_side is not None
             and math.isfinite(lr_qty) and lr_qty > _DUST
             and math.isfinite(execution.leg_risk_entry_vwap)
             and execution.leg_risk_entry_vwap > 0.0
         ):
-            vb = self._venue(execution.leg_risk_venue)
-            if vb is not None:
-                vb.add_open_position(
-                    execution.leg_risk_side, lr_qty, execution.leg_risk_entry_vwap
+            lr_vb = self._venue(execution.leg_risk_venue)
+            if lr_vb is None:
+                log.warning(
+                    "apply_execution rechazada execution_id=%s opportunity_id=%s "
+                    "phase=leg_risk missing_venues=%s",
+                    execution.id, execution.opportunity_id, [execution.leg_risk_venue],
                 )
+                return False
 
-        # 3) Acumula el P&L realizado neto del tramo casado (fees del tramo incluidas).
-        if math.isfinite(execution.realized_pnl):
-            self.realized_pnl += execution.realized_pnl
+        # 2) Aplicar sobre estado protegido: snapshot de los campos contables afectados.
+        touched: dict[str, VenueBalance] = {vb.venue: vb for vb, *_ in moves}
+        if lr_vb is not None:
+            touched[lr_vb.venue] = lr_vb
+        snapshot = {
+            v: (vb.btc, vb.quote, vb.open_btc, vb.open_cost_basis_usd)
+            for v, vb in touched.items()
+        }
+        realized_before = self.realized_pnl
+        try:
+            # Balances físicos por el fill completo de cada leg (conservación exacta).
+            for vb, side, qty, vwap, fee in moves:
+                vb.move_physical(side, qty, vwap, fee)
+            # Posición ABIERTA: SÓLO el excedente de leg risk (no casado) con su coste base.
+            # El tramo casado NO se registra como abierto (su P&L ya está en realized).
+            if lr_vb is not None and lr_side is not None:
+                lr_vb.add_open_position(lr_side, lr_qty, execution.leg_risk_entry_vwap)
+            # Acumula el P&L realizado neto del tramo casado (fees del tramo incluidas).
+            if math.isfinite(execution.realized_pnl):
+                self.realized_pnl += execution.realized_pnl
+        except Exception:
+            # 3) Restaurar el snapshot COMPLETO: el fingerprint contable queda intacto.
+            for v, (btc, quote, open_btc, basis) in snapshot.items():
+                vb = touched[v]
+                vb.btc, vb.quote, vb.open_btc, vb.open_cost_basis_usd = (
+                    btc, quote, open_btc, basis,
+                )
+            self.realized_pnl = realized_before
+            log.warning(
+                "apply_execution rollback execution_id=%s opportunity_id=%s phase=mutation",
+                execution.id, execution.opportunity_id, exc_info=True,
+            )
+            return False
+        return True
 
     def _mark(self, venue: str, books: dict[str, NormalizedBook], btc: float) -> float | None:
         """Precio de marca para el BTC del venue contra el libro actual. Largo → best_bid

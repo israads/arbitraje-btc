@@ -51,7 +51,8 @@ def build_validation_report() -> ValidationReport:
     pf = Portfolio(settings_seeded)
     quote_before = {v: vb.quote for v, vb in pf.venues.items()}
     btc_before = sum(vb.btc for vb in pf.venues.values())
-    pf.apply_execution(execution)
+    applied = pf.apply_execution(execution)
+    assert applied, "el escenario canónico debe aplicarse al ledger (PRD-009 RF-003)"
 
     inv: list[InvariantResult] = [
         invariants.check_net_identity(opp, settings),

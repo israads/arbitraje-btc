@@ -22,8 +22,11 @@
 |---|---|---|
 | 0. Checkpoint | rama `entrega-12jul`, manifiesto 45 archivos, backup DB en scratchpad, push | ✅ commit 98d4937 |
 | A. PRDs 009-015 | borradores (4 agentes paralelos) → ciclo de revisión por PRD | ✅ 7/7 cerrados |
-| B. Arquitectura | docs/architecture/009-cierre-12jul.md consolidada → ciclo Codex/Claude/Codex | 🔄 |
-| C. Código | tareas por PRD, ejecución + revisión + verificación de etapa acumulada | ⬜ |
+| B. Arquitectura | docs/architecture/009-cierre-12jul.md consolidada → ciclo Codex/Claude/Codex | ✅ commit d39f4c2 |
+| C. Código | 8 partes según arquitectura §4; tracking en task list de la sesión | 🔄 Parte 1 en curso |
+
+> Resuelto 22:2x — `colima start` OK (daemon 29.2.1) + `brew install docker-compose` enlazado como
+> plugin CLI (`docker compose` 5.3.1). GATE-COMPOSE ejecutable esta noche; PRD-011/015 desbloqueados.
 | D. Integración | suite completa, smoke navegador Chrome, demo, evidencia | ⬜ |
 
 ## Mapa PRD → bloques del plan (`docs/plan-accion-final-12jul.md`)
@@ -42,6 +45,10 @@
 
 009 → 010 → 011 → 012 → 013 → 014 → 015. Tras cada tarea N: verificar que 1..N siguen verdes
 (suite backend + typecheck/build frontend). Commit + push por parte terminada.
+
+## Registro fase C
+
+- Parte 1 (PRD-009): implementada verde (527 tests, cobertura 91.46%). Codex #1 código: APROBADO. Claude: tests endurecidos (contrato pinneado, asserts de estado, spy de persistencia, doc-comment ConfigPanel). Codex #2: en curso.
 
 ## Registro
 

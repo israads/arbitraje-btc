@@ -246,11 +246,12 @@ def test_can_afford_depletes_with_sequential_execution():
     assert pf.can_afford(opp3) is False
 
 
-def test_can_afford_unknown_venue_not_blocked():
-    """Venue no sembrado → no bloquea (consistente con apply_execution que lo ignora)."""
+def test_can_afford_unknown_venue_blocked():
+    """INVERTIDO (PRD-009 RF-001): venue no sembrado → BLOQUEA (consistente con
+    apply_execution transaccional, que rechaza venues ausentes)."""
     pf = _portfolio()
     opp = _viable(net=10.0, q=1.0, vwap_buy=40_000.0, buy="okx_unseeded", sell="kraken")
-    assert pf.can_afford(opp) is True
+    assert pf.can_afford(opp) is False
 
 
 def test_can_afford_nonfinite_q_false():

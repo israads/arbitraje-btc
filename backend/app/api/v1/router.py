@@ -518,19 +518,54 @@ async def config_sim(request: Request) -> dict[str, Any]:
 
 @router.put("/config/sim", tags=["config"], dependencies=[Depends(require_control_token)])
 async def config_sim_put(request: Request, body: SimConfig) -> dict[str, Any]:
-    """Guarda la configuración BASE (persistente) y la aplica al motor en caliente.
+    """Guarda la configuración BASE (persistente) y aplica las ediciones hot al motor.
 
     A diferencia de /params (what-if read-only), esto SÍ cambia la config real: muta
-    fees/venues/umbrales en settings y re-siembra el portfolio con los nuevos balances. Persiste
-    en la DB, así sobrevive reinicios. Sigue siendo simulación: no opera con dinero real.
+    fees/balances/umbrales en settings; re-siembra el portfolio SOLO si cambian los balances
+    iniciales. `enabled` NO es editable en caliente (PRD-009 RF-004): un cambio devuelve 409
+    `venue_restart_required` (se edita en la config de despliegue + reinicio). Persiste en la
+    DB, así sobrevive reinicios. Sigue siendo simulación: no opera con dinero real.
+
+    Orden sin aplicación parcial (RF-007): 422 venue desconocido → 409 enabled → preparar
+    sobre copias (sin mutar ctx) → persistir → aplicar runtime sin await intermedio.
     """
     from ...models.config import SimConfig as _SimConfig
-    from ...store.config_store import apply_sim_config, load_app_config, save_app_config
+    from ...sim import Portfolio
+    from ...store.config_store import (
+        apply_sim_config,
+        diff_sim_config,
+        load_app_config,
+        save_app_config,
+    )
 
     ctx = request.app.state.ctx
     engine = ctx.db_engine
     if engine is None:
         raise HTTPException(status_code=503, detail="db not initialized")
+
+    # 422 — claves de venue que no existen en Settings (antes que cualquier otro rechazo).
+    unknown = sorted(set(body.exchanges) - set(ctx.settings.exchanges))
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"venues desconocidos: {', '.join(unknown)}")
+
+    # 409 — cambio EXPLÍCITO de `enabled` respecto al runtime: requiere reinicio (RF-004).
+    diverging = sorted(
+        venue
+        for venue, ov in body.exchanges.items()
+        if ov.enabled is not None and ov.enabled != ctx.settings.exchanges[venue].enabled
+    )
+    if diverging:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "venue_restart_required",
+                "venues": diverging,
+                "message": (
+                    "Cambiar los venues activos requiere editar la configuración de "
+                    "despliegue y reiniciar el servicio."
+                ),
+            },
+        )
 
     # Merge sobre lo ya persistido (envíos parciales no borran lo anterior).
     persisted = await load_app_config(engine)
@@ -543,10 +578,26 @@ async def config_sim_put(request: Request, body: SimConfig) -> dict[str, Any]:
     merged = base.model_copy(update={k: v for k, v in incoming.items() if k != "exchanges"})
     merged.exchanges = merged_ex
 
-    applied = apply_sim_config(ctx.settings, merged)
+    # PREPARAR sobre copias profundas (nada de esto muta ctx; todo lo falible ocurre aquí):
+    # diff real "solo si difiere" (presencia ≠ cambio) y, si cambian los balances iniciales,
+    # el portfolio re-sembrado. `enabled` queda fuera del camino hot (RF-004).
+    applied = diff_sim_config(ctx.settings, merged, include_enabled=False)
+    reseed = any(".initial_btc=" in c or ".initial_quote=" in c for c in applied)
+    new_portfolio: Portfolio | None = None
+    if reseed and ctx.portfolio is not None:
+        prepared_settings = ctx.settings.model_copy(deep=True)
+        apply_sim_config(prepared_settings, merged, include_enabled=False)
+        new_portfolio = Portfolio(prepared_settings)
+
+    # PERSISTIR en transacción; un fallo aquí deja runtime, portfolio y cache intactos.
     await save_app_config(engine, merged.model_dump(mode="json", exclude_none=True))
-    if ctx.portfolio is not None:
-        ctx.portfolio.reseed()  # balances nuevos → punto de partida limpio
+
+    # APLICAR runtime, sin await intermedio: un lector ve el estado anterior o el nuevo,
+    # nunca una mezcla. El portfolio preparado se enlaza a la instancia canónica de Settings.
+    apply_sim_config(ctx.settings, merged, include_enabled=False)
+    if new_portfolio is not None:
+        new_portfolio.settings = ctx.settings
+        ctx.portfolio = new_portfolio  # balances nuevos → punto de partida limpio
     _PROJECTION_CACHE.clear()
     return {"applied": applied, "config": _sim_config_snapshot(ctx)}
 

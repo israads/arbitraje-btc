@@ -182,25 +182,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 if opp.status is OpportunityStatus.discarded:
                     _move_viable_to_discarded()
             else:
-                ctx.opp_counts[OpportunityStatus.captured.value] += 1
-                if execution.unwound:
-                    ctx.opp_counts["unwound"] += 1  # sub-conteo de captured (STORY-016)
-                if ctx.metrics is not None:  # C13: fill ratio + latencia de ejecución
-                    ctx.metrics.record_execution(execution)
-                # C10 (STORY-010): aplica el Execution a la cartera con doble entrada
-                # (balances + realized P&L) y sella un punto de la equity curve marcando a
-                # mercado con los libros vivos del detector. Autostart-safe y retrocompatible.
-                if ctx.portfolio is not None:
+                # C10 (STORY-010) / PRD-009 AD-1: aplica PRIMERO el Execution a la cartera
+                # (doble entrada, transaccional). Sólo con `True` se cuenta `captured`, se
+                # mide, se sella equity, se publica P&L y se persiste: una ejecución sin
+                # asiento contable no deja evidencia aguas abajo.
+                applied = (
                     ctx.portfolio.apply_execution(execution)
-                    ts = execution.ts if execution.ts is not None else 0.0
-                    ctx.portfolio.record_equity_point(ctx.detector.books, ts=ts)
-                    # C11: push de P&L en tiempo real (throttled) — el dashboard deja de
-                    # depender del polling de /pnl (sin lag de intervalo).
-                    pf, books = ctx.portfolio, ctx.detector.books
-                    publisher.publish_pnl(lambda: pf.pnl_summary(books))
-                # C12 (STORY-011): encola la ejecución para persistencia batch.
-                if ctx.writer is not None:
-                    ctx.writer.enqueue_execution(execution)
+                    if ctx.portfolio is not None
+                    else True  # autostart-safe: sin cartera no hay ledger que proteger
+                )
+                if not applied:
+                    # El ledger rechazó la ejecución: la opp llegó `captured` (la mutó
+                    # simulate) y se reclasifica a discarded(insufficient_balance) ANTES de
+                    # publicarse/persistirse. `executable` permanece (sí se sometió a
+                    # ejecución, misma semántica que el descarte pre-trade del simulador).
+                    opp.status = OpportunityStatus.discarded
+                    opp.discard_reason = DiscardReason.insufficient_balance
+                    _move_viable_to_discarded()
+                else:
+                    ctx.opp_counts[OpportunityStatus.captured.value] += 1
+                    if execution.unwound:
+                        ctx.opp_counts["unwound"] += 1  # sub-conteo de captured (STORY-016)
+                    if ctx.metrics is not None:  # C13: fill ratio + latencia de ejecución
+                        ctx.metrics.record_execution(execution)
+                    if ctx.portfolio is not None:
+                        ts = execution.ts if execution.ts is not None else 0.0
+                        ctx.portfolio.record_equity_point(ctx.detector.books, ts=ts)
+                        # C11: push de P&L en tiempo real (throttled) — el dashboard deja de
+                        # depender del polling de /pnl (sin lag de intervalo).
+                        pf, books = ctx.portfolio, ctx.detector.books
+                        publisher.publish_pnl(lambda: pf.pnl_summary(books))
+                    # C12 (STORY-011): encola la ejecución para persistencia batch.
+                    if ctx.writer is not None:
+                        ctx.writer.enqueue_execution(execution)
         publisher.publish_opportunity(opp)  # C11 → SSE (STORY-005)
         # PRD-005: sample shadow observe-only. Se captura con el estado FINAL de la opp y
         # libros presentes; la supervivencia futura se calcula sólo bajo demanda.

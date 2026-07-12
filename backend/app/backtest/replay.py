@@ -198,7 +198,8 @@ def _replay_segment(
             execution = sim.simulate(opp, bb, sb, sell_book_t1=sb_t1, ts=nb.ts_recv_monotonic)
             if execution is None:
                 continue  # descarte pre-trade por slippage (gate del simulador)
-            pf.apply_execution(execution)  # sanea internamente: sólo suma realized si es finito
+            if not pf.apply_execution(execution):
+                continue  # rechazo del ledger (PRD-009): sin asiento no hay trade ni equity
             # Guard de finitud: un realized_pnl NaN/inf (book corrupto) NO debe envenenar las
             # métricas (Sharpe ya se protege, pero el drawdown con NaN quedaría en 0 silencioso).
             pnl = execution.realized_pnl if math.isfinite(execution.realized_pnl) else 0.0

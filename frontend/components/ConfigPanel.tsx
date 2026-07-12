@@ -11,9 +11,10 @@ import { API_BASE } from '../lib/config';
 import { SectionHeader, VenueTag } from './primitives';
 
 /**
- * Panel de CONFIGURACIÓN BASE editable (no what-if): balances pre-posicionados por venue, fees,
- * venues habilitados y umbrales económicos. Se guarda persistente y el motor la aplica
- * (re-siembra el portfolio). Sigue siendo simulación: no opera con dinero real.
+ * Panel de CONFIGURACIÓN BASE editable (no what-if): balances pre-posicionados por venue, fees
+ * y umbrales económicos. Se guarda persistente; fees/umbrales aplican en caliente y cambiar los
+ * balances iniciales re-siembra el portfolio. `enabled` NO es editable en caliente (PRD-009):
+ * requiere reiniciar el servicio. Sigue siendo simulación: no opera con dinero real.
  * GET/PUT /api/v1/config/sim.
  */
 
@@ -74,12 +75,12 @@ export function ConfigPanel() {
     if (!cfg || busy) return;
     setBusy(true);
     try {
+      // `enabled` NO se envía: no es editable en caliente (requiere reiniciar el servicio).
       const payload = {
         exchanges: Object.fromEntries(
           Object.entries(cfg.exchanges).map(([k, e]) => [
             k,
             {
-              enabled: e.enabled,
               fee_taker: e.fee_bps / 10_000,
               initial_btc: e.initial_btc,
               initial_quote: e.initial_quote,
@@ -95,6 +96,17 @@ export function ConfigPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      if (r.status === 409) {
+        // Rama específica del bloqueo de venues (PRD-009): mensaje del backend, no genérico.
+        const body409 = await r.json().catch(() => null);
+        const detail = body409?.detail;
+        const msg =
+          detail?.code === 'venue_restart_required' && typeof detail?.message === 'string'
+            ? detail.message
+            : 'Cambiar los venues activos requiere reiniciar el servicio.';
+        notifications.show({ title: 'Requiere reinicio', message: msg, color: 'yellow' });
+        return;
+      }
       if (!r.ok) throw new Error(`${r.status}`);
       const data = await r.json();
       if (data.config) setCfg(data.config);
@@ -114,7 +126,7 @@ export function ConfigPanel() {
         title="Configuración base"
         subtitle="balances, fees y venues · persistente"
         icon={<IconSettings2 size={18} />}
-        help="La configuración REAL de la simulación (no what-if): los fondos iniciales por exchange, las comisiones, qué venues están activos y los umbrales. Se guarda y el motor la usa al instante (re-siembra los balances). Es simulación: no opera con dinero real."
+        help="La configuración REAL de la simulación (no what-if): los fondos iniciales por exchange, las comisiones y los umbrales. Fees y umbrales aplican en caliente; cambiar los balances iniciales re-siembra el portfolio. Activar/desactivar venues requiere reiniciar el servicio. Es simulación: no opera con dinero real."
         right={
           saved ? (
             <Badge variant="light" color="brand">
@@ -152,13 +164,18 @@ export function ConfigPanel() {
                       <VenueTag name={venue} />
                     </Table.Td>
                     <Table.Td ta="center">
+                      {/* `enabled` no es editable en caliente (PRD-009): switch deshabilitado
+                          + texto explícito (no sólo color) con el procedimiento. */}
                       <Switch
                         size="sm"
                         color="brand"
                         checked={e.enabled}
-                        onChange={(ev) => patchVenue(venue, { enabled: ev.currentTarget.checked })}
-                        aria-label={`Activar ${venue}`}
+                        disabled
+                        aria-label={`${venue} ${e.enabled ? 'activo' : 'inactivo'} — cambiarlo requiere reiniciar el servicio`}
                       />
+                      <Text size="10px" c="dimmed" mt={2}>
+                        Requiere reiniciar el servicio
+                      </Text>
                     </Table.Td>
                     <Table.Td>
                       <NumberInput
@@ -241,8 +258,10 @@ export function ConfigPanel() {
             p="xs"
           >
             <Text size="xs">
-              Guardar aplica la config al motor y <b>re-siembra los balances</b> (reinicia P&L de la
-              sesión). Es simulación: no ejecuta operaciones reales.
+              Fees y umbrales aplican en caliente sin tocar el P&L. Cambiar los{' '}
+              <b>balances iniciales re-siembra el portfolio</b> (reinicia P&L de la sesión).
+              Activar/desactivar venues requiere reiniciar el servicio. Es simulación: no
+              ejecuta operaciones reales.
             </Text>
           </Alert>
 

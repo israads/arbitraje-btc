@@ -95,6 +95,17 @@ def _total_quote(pf: Portfolio) -> float:
     return sum(vb.quote for vb in pf.venues.values())
 
 
+def _fingerprint(pf: Portfolio):
+    """Fingerprint contable completo (PRD-009): campos por venue + realized_pnl."""
+    return (
+        {
+            v: (vb.btc, vb.quote, vb.open_btc, vb.open_cost_basis_usd)
+            for v, vb in pf.venues.items()
+        },
+        pf.realized_pnl,
+    )
+
+
 # --- Siembra ---------------------------------------------------------------
 
 def test_seed_from_config():
@@ -128,7 +139,7 @@ def test_full_fill_double_entry_and_conservation():
     buy = _book("binance", bids=[(99.0, 5.0)], asks=[(100.0, 5.0)])
     sell = _book("kraken", bids=[(110.0, 5.0)], asks=[(111.0, 5.0)])
     ex = sim.simulate(_viable(), buy, sell, ts=1.0)
-    pf.apply_execution(ex)
+    assert pf.apply_execution(ex) is True  # PRD-009: el camino de aceptación devuelve True
 
     # BTC: compré 1 en binance (+1), vendí 1 en kraken (−1) → total conservado.
     assert _total_btc(pf) == pytest.approx(btc0)
@@ -153,7 +164,7 @@ def test_realized_pnl_accumulates_over_executions():
     total = 0.0
     for _ in range(3):
         ex = sim.simulate(_viable(), buy, sell, ts=1.0)
-        pf.apply_execution(ex)
+        assert pf.apply_execution(ex) is True
         total += ex.realized_pnl
     assert pf.realized_pnl == pytest.approx(total)
     assert pf.realized_pnl > 0.0  # spread amplio: positivo
@@ -170,7 +181,7 @@ def test_leg_risk_excess_moves_balance():
     buy = _book("binance", bids=[(99.0, 5.0)], asks=[(100.0, 5.0)])
     sell = _book("kraken", bids=[(110.0, 0.4)], asks=[(111.0, 5.0)])
     ex = sim.simulate(_viable(), buy, sell, ts=1.0)
-    pf.apply_execution(ex)
+    assert pf.apply_execution(ex) is True  # leg risk efectivo en venue sembrado: acepta
     assert ex.leg_risk_qty == pytest.approx(0.6)
     # binance compró 1.0 (+1.0), kraken vendió 0.4 (−0.4) → neto +0.6 vs inicial.
     assert _total_btc(pf) == pytest.approx(btc0 + 0.6)
@@ -914,19 +925,19 @@ def test_add_open_position_reduce_without_sign_cross_uses_avg_cost():
     assert vb.open_cost_basis_usd == pytest.approx(60.0)  # 100 - 0.4·100 (coste MEDIO previo)
 
 
-def test_apply_execution_ignores_unknown_venue_leg():
-    """Un leg en un venue NO sembrado se ignora (guard 204): no rompe balances ni crea
-    un venue fantasma. El otro leg (venue conocido) sí se aplica."""
+def test_apply_execution_rejects_unknown_venue_leg():
+    """INVERTIDO (PRD-009 RF-002): un leg en un venue NO sembrado RECHAZA la ejecución
+    completa — `False`, cero mutación (ni siquiera el leg conocido) y sin venue fantasma."""
     s = _settings()
     pf = Portfolio(s)
-    btc_binance0 = pf.venues["binance"].btc
+    fp0 = _fingerprint(pf)
     ex = _exec([
         _leg("binance", LegSide.buy, 1.0, 100.0, 0.0),
         _leg("desconocido", LegSide.sell, 1.0, 110.0, 0.0),
     ])
-    pf.apply_execution(ex)
+    assert pf.apply_execution(ex) is False
     assert "desconocido" not in pf.venues          # no se crea el venue fantasma
-    assert pf.venues["binance"].btc == pytest.approx(btc_binance0 + 1.0)  # leg conocido aplicado
+    assert _fingerprint(pf) == fp0                 # el leg conocido TAMPOCO se aplicó (atómico)
 
 
 def test_mark_falls_back_to_valid_side_when_primary_invalid():
@@ -950,3 +961,124 @@ def test_mark_none_when_no_valid_price():
     assert pf._mark("binance", {"binance": book}, 1.0) is None
     # Sin libro para el venue → None.
     assert pf._mark("binance", {}, 1.0) is None
+
+
+# --- PRD-009: apply_execution transaccional (gate de salida, tests 1-3 y 4b) ------------
+
+def test_apply_execution_unknown_buy_venue_rejected_atomically():
+    """Test 1 del gate: buy venue desconocido → `False` y fingerprint completo intacto
+    (cero mutación, cero P&L, aunque `realized_pnl` viniera > 0)."""
+    pf = Portfolio(_settings())
+    fp0 = _fingerprint(pf)
+    ex = _exec([
+        _leg("fantasma", LegSide.buy, 1.0, 100.0, 0.1),
+        _leg("kraken", LegSide.sell, 1.0, 110.0, 0.1),
+    ], realized_pnl=9.8)
+    assert pf.apply_execution(ex) is False
+    assert _fingerprint(pf) == fp0
+    assert "fantasma" not in pf.venues
+    assert len(pf.equity_series) == 0
+
+
+def test_apply_execution_unknown_sell_venue_rejected_atomically():
+    """Test 2 del gate: sell venue desconocido → `False` y fingerprint completo intacto."""
+    pf = Portfolio(_settings())
+    fp0 = _fingerprint(pf)
+    ex = _exec([
+        _leg("binance", LegSide.buy, 1.0, 100.0, 0.1),
+        _leg("fantasma", LegSide.sell, 1.0, 110.0, 0.1),
+    ], realized_pnl=9.8)
+    assert pf.apply_execution(ex) is False
+    assert _fingerprint(pf) == fp0
+    assert "fantasma" not in pf.venues
+
+
+def test_apply_execution_unknown_leg_risk_venue_rejects_whole_execution():
+    """Leg risk EFECTIVO apuntando a un venue ausente rechaza la ejecución completa
+    (fase leg_risk de la validación): ni los legs válidos se aplican."""
+    pf = Portfolio(_settings())
+    fp0 = _fingerprint(pf)
+    ex = _exec([
+        _leg("binance", LegSide.buy, 1.5, 100.0, 0.0),
+        _leg("kraken", LegSide.sell, 1.0, 110.0, 0.0),
+    ], realized_pnl=5.0)
+    assert ex.leg_risk_qty == pytest.approx(0.5)  # leg risk efectivo (buy sobre-llenado)
+    ex.leg_risk_venue = "fantasma"
+    assert pf.apply_execution(ex) is False
+    assert _fingerprint(pf) == fp0
+
+
+def test_apply_execution_rolls_back_on_second_leg_failure(monkeypatch):
+    """Test 3 del gate: fallo inyectado al mutar la SEGUNDA pata → rollback del snapshot
+    completo (todos los campos contables) y sin punto de equity."""
+    from app.sim.inventory import VenueBalance
+
+    pf = Portfolio(_settings())
+    fp0 = _fingerprint(pf)
+    orig = VenueBalance.move_physical
+    calls = {"n": 0}
+
+    def boom(self, side, qty, price, fee):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("fallo inyectado en la segunda pata")
+        orig(self, side, qty, price, fee)
+
+    monkeypatch.setattr(VenueBalance, "move_physical", boom)
+    ex = _exec([
+        _leg("binance", LegSide.buy, 1.0, 100.0, 0.1),
+        _leg("kraken", LegSide.sell, 1.0, 110.0, 0.1),
+    ], realized_pnl=9.8)
+    assert pf.apply_execution(ex) is False
+    assert calls["n"] == 2                       # la primera pata SÍ llegó a mutar
+    assert _fingerprint(pf) == fp0               # ...y el rollback la restauró
+    assert len(pf.equity_series) == 0
+
+
+def test_apply_execution_rolls_back_on_leg_risk_failure(monkeypatch):
+    """Test 3 del gate (variante leg risk): fallo inyectado en `add_open_position` tras
+    mover ambas patas físicas → rollback completo, cero P&L."""
+    from app.sim.inventory import VenueBalance
+
+    pf = Portfolio(_settings())
+    fp0 = _fingerprint(pf)
+
+    def boom(self, side, qty, entry_vwap):
+        raise RuntimeError("fallo inyectado en el leg risk")
+
+    monkeypatch.setattr(VenueBalance, "add_open_position", boom)
+    ex = _exec([
+        _leg("binance", LegSide.buy, 1.5, 100.0, 0.0),
+        _leg("kraken", LegSide.sell, 1.0, 110.0, 0.0),
+    ], realized_pnl=5.0)
+    assert pf.apply_execution(ex) is False
+    assert _fingerprint(pf) == fp0
+    assert len(pf.equity_series) == 0
+
+
+def test_can_afford_false_when_buy_or_sell_venue_missing():
+    """RF-001: `can_afford` devuelve False por separado con buy o sell venue ausente."""
+    pf = Portfolio(_settings())
+    assert pf.can_afford(_viable(buy="fantasma", sell="kraken")) is False
+    assert pf.can_afford(_viable(buy="binance", sell="fantasma")) is False
+
+
+def test_no_phantom_pnl_with_disabled_venue():
+    """Test 4b del gate: reproducción del Problema del PRD — venue `enabled=false` no
+    sembrado. La opp que lo usa NO es asequible (→ discarded insufficient_balance en vivo)
+    y una aplicación FORZADA de su ejecución devuelve `False`: cero mutación, cero P&L."""
+    s = _settings()
+    s.exchanges["kraken"].enabled = False
+    pf = Portfolio(s)                            # kraken no sembrado
+    assert set(pf.venues) == {"binance"}
+    opp = _viable(buy="binance", sell="kraken")
+    assert pf.can_afford(opp) is False
+    fp0 = _fingerprint(pf)
+    ex = _exec([
+        _leg("binance", LegSide.buy, 1.0, 100.0, 0.0),
+        _leg("kraken", LegSide.sell, 1.0, 110.0, 0.0),
+    ], realized_pnl=8.0)
+    assert pf.apply_execution(ex) is False
+    assert _fingerprint(pf) == fp0
+    assert pf.realized_pnl == pytest.approx(0.0)
+    assert len(pf.equity_series) == 0

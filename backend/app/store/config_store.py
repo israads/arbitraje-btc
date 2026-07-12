@@ -48,39 +48,72 @@ async def save_app_config(engine: AsyncEngine, data: dict[str, Any], key: str = 
         await session.execute(stmt)
 
 
-def apply_sim_config(settings: Settings, cfg: SimConfig) -> list[str]:
-    """Aplica `cfg` a `settings` in-place. Devuelve la lista de cambios aplicados (para auditoría).
-
-    Es la fuente de la "configuración base": muta los `ExchangeConfig` (enabled/fee/inventario) y
-    los umbrales económicos globales. El portfolio debe re-sembrarse aparte para reflejar balances.
-    """
+def _walk_sim_config(
+    settings: Settings, cfg: SimConfig, *, apply: bool, include_enabled: bool
+) -> list[str]:
+    """Recorre las diferencias REALES entre `cfg` y `settings` (valor efectivo ≠ runtime,
+    PRD-009 RF-006: presencia ≠ cambio). Con `apply=True` las muta; con `apply=False` sólo
+    las lista (fase de preparación, sin efectos). `include_enabled=False` excluye `enabled`
+    (camino hot: el endpoint lo bloquea con 409; sólo el arranque lo aplica)."""
     changed: list[str] = []
     for venue, ov in cfg.exchanges.items():
         ex = settings.exchanges.get(venue)
         if ex is None:
             continue
-        if ov.enabled is not None and ov.enabled != ex.enabled:
-            ex.enabled = ov.enabled
+        if include_enabled and ov.enabled is not None and ov.enabled != ex.enabled:
+            if apply:
+                ex.enabled = ov.enabled
             changed.append(f"{venue}.enabled={ov.enabled}")
-        if ov.fee_taker is not None:
-            ex.fee_taker = ov.fee_taker
+        if ov.fee_taker is not None and ov.fee_taker != ex.fee_taker:
+            if apply:
+                ex.fee_taker = ov.fee_taker
             changed.append(f"{venue}.fee_taker={ov.fee_taker}")
-        if ov.initial_btc is not None:
-            ex.initial_btc = ov.initial_btc
+        if ov.initial_btc is not None and ov.initial_btc != ex.initial_btc:
+            if apply:
+                ex.initial_btc = ov.initial_btc
             changed.append(f"{venue}.initial_btc={ov.initial_btc}")
-        if ov.initial_quote is not None:
-            ex.initial_quote = ov.initial_quote
+        if ov.initial_quote is not None and ov.initial_quote != ex.initial_quote:
+            if apply:
+                ex.initial_quote = ov.initial_quote
             changed.append(f"{venue}.initial_quote={ov.initial_quote}")
-    if cfg.default_trade_qty_btc is not None:
-        settings.default_trade_qty_btc = cfg.default_trade_qty_btc
+    if cfg.default_trade_qty_btc is not None and (
+        cfg.default_trade_qty_btc != settings.default_trade_qty_btc
+    ):
+        if apply:
+            settings.default_trade_qty_btc = cfg.default_trade_qty_btc
         changed.append(f"default_trade_qty_btc={cfg.default_trade_qty_btc}")
-    if cfg.min_net_profit_usd is not None:
-        settings.min_net_profit_usd = cfg.min_net_profit_usd
+    if cfg.min_net_profit_usd is not None and (
+        cfg.min_net_profit_usd != settings.min_net_profit_usd
+    ):
+        if apply:
+            settings.min_net_profit_usd = cfg.min_net_profit_usd
         changed.append(f"min_net_profit_usd={cfg.min_net_profit_usd}")
-    if cfg.max_slippage is not None:
-        settings.max_slippage = cfg.max_slippage
+    if cfg.max_slippage is not None and cfg.max_slippage != settings.max_slippage:
+        if apply:
+            settings.max_slippage = cfg.max_slippage
         changed.append(f"max_slippage={cfg.max_slippage}")
-    if cfg.exec_latency_ms is not None:
-        settings.exec_latency_ms = cfg.exec_latency_ms
+    if cfg.exec_latency_ms is not None and cfg.exec_latency_ms != settings.exec_latency_ms:
+        if apply:
+            settings.exec_latency_ms = cfg.exec_latency_ms
         changed.append(f"exec_latency_ms={cfg.exec_latency_ms}")
     return changed
+
+
+def diff_sim_config(
+    settings: Settings, cfg: SimConfig, *, include_enabled: bool = True
+) -> list[str]:
+    """Fase de PREPARACIÓN (PRD-009 RF-007): lista los cambios reales SIN mutar `settings`."""
+    return _walk_sim_config(settings, cfg, apply=False, include_enabled=include_enabled)
+
+
+def apply_sim_config(
+    settings: Settings, cfg: SimConfig, *, include_enabled: bool = True
+) -> list[str]:
+    """Aplica a `settings` in-place SOLO los campos que difieren del runtime. Devuelve la
+    lista de cambios aplicados (para auditoría).
+
+    Es la fuente de la "configuración base": muta los `ExchangeConfig` (enabled/fee/inventario)
+    y los umbrales económicos globales. El portfolio debe re-sembrarse aparte para reflejar
+    balances. `include_enabled=False` en el camino hot (el endpoint bloquea `enabled` con 409);
+    el arranque conserva el default y sigue aplicando el `enabled` persistido."""
+    return _walk_sim_config(settings, cfg, apply=True, include_enabled=include_enabled)
