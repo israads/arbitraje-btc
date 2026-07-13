@@ -473,15 +473,16 @@ Detalle completo y troubleshooting en [`deploy/README.md`](deploy/README.md).
 ## Configuración
 
 Todo lo económico y operativo vive en `backend/app/config.py` (pydantic-settings) y puede
-sobrescribirse con variables de entorno con prefijo `ARB_` o con un archivo `backend/.env`.
-Para campos anidados (fees por exchange) el delimitador es `__`:
+sobrescribirse con variables de entorno con prefijo `ARB_` o con un archivo `backend/.env`:
 
 ```bash
 export ARB_INGEST_AUTOSTART=false
 export ARB_CONTROL_TOKEN="<set-a-strong-token>"
 export ARB_EXEC_LATENCY_MS=150
 export ARB_EXPECTED_TRADES_PER_REBALANCE=5
-export ARB_EXCHANGES__BINANCE__FEE_TAKER=0.001   # anidado: exchanges.binance.fee_taker
+# El roster de venues se sobrescribe con el dict COMPLETO en JSON (un override
+# parcial tipo ARB_EXCHANGES__X__FEE_TAKER no fusiona con defaults y no arranca):
+export ARB_EXCHANGES='{"kraken":{"id":"kraken","symbol":"BTC/USD","quote_ccy":"USD","fee_taker":0.004,"withdrawal_btc":0.00005,"ob_limit":25}}'
 ```
 
 El motor **arranca sin configurar nada**: todos los campos tienen defaults razonables.
@@ -520,12 +521,7 @@ Guía extendida con escenarios en [`docs/configuracion.md`](docs/configuracion.m
 
 | Variable | Default | Explicación |
 |---|---|---|
-| `ARB_EXCHANGES__<ID>__FEE_TAKER` | por venue | Fee taker (fracción: `0.001` = 0.10%). |
-| `ARB_EXCHANGES__<ID>__WITHDRAWAL_BTC` | por venue | Coste BTC por retiro on-chain (rebalanceo amortizado). |
-| `ARB_EXCHANGES__<ID>__OB_LIMIT` | por venue | Profundidad de order book solicitada/validada. |
-| `ARB_EXCHANGES__<ID>__INITIAL_BTC` | `2.0` | Inventario BTC pre-posicionado por venue. |
-| `ARB_EXCHANGES__<ID>__INITIAL_QUOTE` | `100000` | Quote inicial (USD/USDT) por venue. |
-| `ARB_EXCHANGES__<ID>__ENABLED` | `true` | Activa/desactiva el venue. |
+| `ARB_EXCHANGES` | 7 venues activos | Roster completo en JSON: por venue `id`, `symbol`, `quote_ccy`, `fee_taker` (fracción), `withdrawal_btc` (coste on-chain), `ob_limit` (profundidad), `initial_btc` (2.0), `initial_quote` (100000), `enabled`. Sustituye el dict entero; los venues omitidos desaparecen. |
 | `ARB_QUOTE_TARGET` | `USD` | Moneda de normalización de todos los books. |
 | `ARB_INGEST_AUTOSTART` | `true` | Arranca los WS loops en el lifespan. |
 | `ARB_INGEST_MAX_BACKOFF` | `30.0` | Tope (s) del backoff exponencial de reconexión. |

@@ -1405,20 +1405,32 @@ async def calibration_survival(
     latency_ms: int = Query(default=100, ge=1, le=10_000),
     observation_limit: int = Query(default=50, ge=0, le=500),
 ) -> dict[str, Any]:
-    """Calibración observe-only de P_survive contra supervivencia observada (PRD-005)."""
+    """Calibración observe-only de P_survive contra supervivencia observada (PRD-005).
+
+    El replay de ticks es cómputo CPU pesado: pasa por `_cached_projection` (threadpool +
+    semáforo + TTL) — corriendo sync en el loop congela SSE/writer/health durante decenas
+    de segundos en hosts de 2 cores (visto en el deploy público, 12-jul)."""
     from ...calibration import build_survival_report
 
     ctx = request.app.state.ctx
     recorder = ctx.recorder
     ticks = recorder.ticks() if recorder is not None else []
-    report = build_survival_report(
-        list(ctx.shadow_samples),
-        ticks,
-        ctx.settings,
-        latency_ms=latency_ms,
-        observation_limit=observation_limit,
+    samples = list(ctx.shadow_samples)
+    settings = ctx.settings
+
+    def _compute() -> Any:
+        return build_survival_report(
+            samples,
+            ticks,
+            settings,
+            latency_ms=latency_ms,
+            observation_limit=observation_limit,
+        )
+
+    report = await _cached_projection(
+        f"survival:lat={latency_ms}:obs={observation_limit}", _compute
     )
-    return report.model_dump(mode="json")
+    return cast(dict[str, Any], report.model_dump(mode="json"))
 
 
 @router.get("/projection")

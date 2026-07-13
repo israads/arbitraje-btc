@@ -8,7 +8,7 @@ campos tienen defaults razonables y el flujo principal es simulación con datos 
 
 - **Defaults en código:** `backend/app/config.py` (`Settings`, `ExchangeConfig`).
 - **Override por entorno:** variables con prefijo `ARB_` (anidadas con `__`). Ej.
-  `ARB_DEFAULT_TRADE_QTY_BTC=0.5`, `ARB_EXCHANGES__BINANCE__FEE_TAKER=0.0008`.
+  `ARB_DEFAULT_TRADE_QTY_BTC=0.5`. El roster de venues se sobrescribe con `ARB_EXCHANGES` (JSON del dict completo).
 - **Archivo `.env`:** ver `backend/.env.example`.
 - **En caliente desde la UI:** retención de BD (`PATCH /storage/retention`, operativo real) y
   Strategy Lab (`PATCH /params`, what-if / read-only — no muta el motor vivo).
