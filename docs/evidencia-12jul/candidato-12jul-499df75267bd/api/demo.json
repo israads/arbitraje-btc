@@ -1,0 +1,1 @@
+{"active":true,"mode":"jury","source":"deterministic","badge":"DEMO DATA","since":65655.212364484,"n_replay_ticks":0,"scenario":"good_edge","scenario_description":"Spread amplio que sobrevive VWAP, fees y rebalanceo.","scenario_kind":"market","expected_result":"captured","scenario_index":1,"n_scenarios":7,"scenario_run_id":1498,"scenario_started_at":69223.557925846}
