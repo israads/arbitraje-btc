@@ -13,6 +13,11 @@ services:
       context: ../..
       dockerfile: deploy/Dockerfile
     image: arbitraje-btc-backend
+    # Todo el .env del stack llega al backend (tuning ARB_* por servidor sin tocar
+    # este archivo). Las claves de `environment` de abajo tienen precedencia y fijan
+    # lo no-negociable del deploy público (prod, DB en volumen).
+    env_file:
+      - .env
     environment:
       ARB_ENV: prod
       # Obligatorio (sin default vacío): este stack es público — sin token, el kill-switch,
