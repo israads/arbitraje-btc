@@ -9,8 +9,20 @@ venv/
 .pytest_cache/
 .hypothesis/
 
-# --- Planeación interna (no se versiona) ---
+# --- Planeación interna / investigación (no se versiona) ---
 documentos/
+agents/
+_bmad/
+.claude/
+docs/prd/
+docs/architecture/
+docs/execution/
+docs/CONTEXTO.md
+docs/mcp.md
+docs/auditoria-*.md
+docs/investigacion-*.md
+docs/plan-*.md
+docs/respuesta*.md
 
 # --- Datos / runtime ---
 *.db
@@ -19,6 +31,8 @@ documentos/
 *.sqlite3
 recordings/
 *.log
+# Excepción: los logs del paquete de evidencia SÍ se versionan (gates y auditorías)
+!docs/evidencia-12jul/**/*.log
 
 # --- Entorno (los .example SÍ se versionan) ---
 .env

@@ -1,0 +1,126 @@
+........................................................................ [ 13%]
+........................................................................ [ 26%]
+........................................................................ [ 39%]
+........................................................................ [ 52%]
+........................................................................ [ 65%]
+........................................................................ [ 78%]
+........................................................................ [ 92%]
+...........................................                              [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /Users/isra/Documents/Proyectos/coding_challenge/backend/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+______________ coverage: platform darwin, python 3.12.13-final-0 _______________
+
+Name                              Stmts   Miss  Cover
+-----------------------------------------------------
+app/__init__.py                       1      0   100%
+app/analysis/__init__.py              2      0   100%
+app/analysis/naive_vs_edge.py        62      1    98%
+app/api/__init__.py                   0      0   100%
+app/api/health.py                    53      5    91%
+app/api/security.py                  43      3    93%
+app/api/v1/__init__.py                0      0   100%
+app/api/v1/router.py                622    133    79%
+app/backtest/__init__.py              4      0   100%
+app/backtest/recorder.py             47      3    94%
+app/backtest/replay.py              117      5    96%
+app/bus/__init__.py                   3      0   100%
+app/bus/queue.py                     23      3    87%
+app/calibration/__init__.py           4      0   100%
+app/calibration/samples.py           35      2    94%
+app/calibration/survival.py          63      4    94%
+app/config.py                       106      0   100%
+app/demo/__init__.py                  4      0   100%
+app/demo/fallback.py                175     13    93%
+app/demo/scenarios.py                48      1    98%
+app/engine/__init__.py               36      3    92%
+app/engine/bookmath.py               27      0   100%
+app/engine/cost_model.py             47      0   100%
+app/engine/depth_curve.py            46      0   100%
+app/engine/detector.py               35      0   100%
+app/engine/evaluator.py              71      0   100%
+app/engine/explain.py                38      1    97%
+app/engine/prioritizer.py            44      0   100%
+app/engine/statz.py                  85      2    98%
+app/execution/__init__.py             4      0   100%
+app/execution/binance.py            100     13    87%
+app/execution/models.py               7      0   100%
+app/execution/preflight.py           22      2    91%
+app/execution/registry.py            11      0   100%
+app/ingest/__init__.py               15      1    93%
+app/ingest/exchange_ingestor.py      74      5    93%
+app/integrity/__init__.py             5      0   100%
+app/integrity/checker.py             40      1    98%
+app/integrity/models.py              24      0   100%
+app/integrity/validators.py          99      6    94%
+app/logging_config.py                12      0   100%
+app/main.py                         204     93    54%
+app/metrics/__init__.py               4      0   100%
+app/metrics/collector.py            117      4    97%
+app/metrics/prometheus.py           120     28    77%
+app/models/__init__.py               16      0   100%
+app/models/account.py                10      0   100%
+app/models/analysis.py               22      0   100%
+app/models/backtest.py               22      0   100%
+app/models/calibration.py            54      0   100%
+app/models/config.py                 13      0   100%
+app/models/enums.py                  37      0   100%
+app/models/events.py                 11      1    91%
+app/models/execution.py              30      0   100%
+app/models/explain.py                34      0   100%
+app/models/market.py                 50      0   100%
+app/models/metrics.py                35      0   100%
+app/models/opportunity.py            28      0   100%
+app/models/params.py                 28      0   100%
+app/models/preflight.py              44      0   100%
+app/models/projection.py             75      0   100%
+app/models/risk.py                    8      0   100%
+app/models/session.py                20      0   100%
+app/models/strategy.py               69      0   100%
+app/normalize/__init__.py            15      0   100%
+app/normalize/normalizer.py          17      0   100%
+app/normalize/peg.py                 27      0   100%
+app/normalize/peg_ingestor.py        53      0   100%
+app/projection/__init__.py            6      0   100%
+app/projection/capacity.py           85      7    92%
+app/projection/forward.py           100      4    96%
+app/projection/frontier.py          131     15    89%
+app/projection/survival.py           16      2    88%
+app/risk/__init__.py                  0      0   100%
+app/risk/breakers.py                156      1    99%
+app/risk/watchdog.py                 42      0   100%
+app/runner.py                         4      0   100%
+app/sim/__init__.py                   5      0   100%
+app/sim/inventory.py                257      2    99%
+app/sim/rebalancer.py                30      5    83%
+app/sim/simulator.py                117      0   100%
+app/state.py                         64      2    97%
+app/store/__init__.py                 3      0   100%
+app/store/config_store.py            74     15    80%
+app/store/db.py                      82      4    95%
+app/store/retention.py               96     11    89%
+app/store/writer.py                 154      8    95%
+app/strategies/__init__.py            8      0   100%
+app/strategies/base.py                8      0   100%
+app/strategies/funding.py            39      6    85%
+app/strategies/regional_mxn.py       37     12    68%
+app/strategies/spatial.py            15      1    93%
+app/strategies/stat_z.py             15      1    93%
+app/strategies/triangular.py        169     19    89%
+app/stream/__init__.py                4      0   100%
+app/stream/hub.py                    35      4    89%
+app/stream/pump.py                   49      3    94%
+app/validate/__init__.py              6      0   100%
+app/validate/harness.py              38      0   100%
+app/validate/invariants.py          129      0   100%
+app/validate/projection.py            3      0   100%
+app/validate/report.py               30      0   100%
+app/validate/results.py              20      0   100%
+-----------------------------------------------------
+TOTAL                              5444    455    92%
+Required test coverage of 85% reached. Total coverage: 91.64%
+547 passed, 1 warning in 38.82s
