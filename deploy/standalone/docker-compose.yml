@@ -45,6 +45,13 @@ services:
       retries: 6
       start_period: 30s
     restart: unless-stopped
+    # Cap de logs (RNF): bajo overflow sostenido del writer el log crecería sin
+    # límite y llenaría el disco del host. 3×50 MB por servicio, rotación local.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - arb-net
 
@@ -61,6 +68,11 @@ services:
     expose:
       - "3100"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
     networks:
       - arb-net
 
@@ -78,6 +90,11 @@ services:
       frontend:
         condition: service_started
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
     networks:
       - arb-net
 

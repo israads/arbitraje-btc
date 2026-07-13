@@ -80,6 +80,11 @@ class BatchWriter:
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue(maxsize=10_000)
         self._task: asyncio.Task[None] | None = None
         self._running = False
+        # Throttle del log de descartes: bajo overflow sostenido (mercado activo,
+        # CPU escasa) un warning POR registro llega a >400 líneas/s — eso quema
+        # loop y disco. Se agrega en un contador y se reporta como máximo cada 5 s.
+        self._drops_since_log = 0
+        self._last_drop_log = 0.0
 
     # ------------------------------------------------------------------
     # API de encolado (camino caliente — sin I/O de DB)
@@ -150,11 +155,21 @@ class BatchWriter:
         self._put_nowait("snapshot", row)
 
     def _put_nowait(self, kind: str, data: dict[str, Any]) -> None:
-        """Inserta en la cola sin bloquear. Descarta con log si está llena."""
+        """Inserta en la cola sin bloquear. Descarta (con log agregado) si está llena."""
         try:
             self._queue.put_nowait((kind, data))
         except asyncio.QueueFull:
-            log.warning("Cola de persistencia llena; descartando registro %s", kind)
+            self._drops_since_log += 1
+            now = time.monotonic()
+            if now - self._last_drop_log >= 5.0:
+                log.warning(
+                    "Cola de persistencia llena; %d registros descartados desde el último "
+                    "aviso (último: %s)",
+                    self._drops_since_log,
+                    kind,
+                )
+                self._drops_since_log = 0
+                self._last_drop_log = now
 
     # ------------------------------------------------------------------
     # Ciclo de flushing (task de fondo)

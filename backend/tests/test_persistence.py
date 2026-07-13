@@ -13,6 +13,7 @@ Criterios cubiertos:
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import uuid
 
@@ -416,6 +417,26 @@ async def test_enqueue_drops_when_queue_full_without_raising() -> None:
     assert bw._queue.full()
     bw.enqueue_opportunity(_make_opp())  # descartado, no lanza
     assert bw._queue.qsize() == 2
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_queue_full_log_is_throttled(caplog: pytest.LogCaptureFixture) -> None:
+    """Bajo overflow sostenido el warning de descarte se agrega (máx. uno cada 5 s con el
+    conteo acumulado), en vez de una línea por registro: >400 líneas/s queman loop y disco."""
+    engine = make_engine("sqlite+aiosqlite:///:memory:")
+    await init_db(engine)
+    bw = BatchWriter(engine=engine, batch_size=100, flush_seconds=60.0)
+    bw._queue = asyncio.Queue(maxsize=1)
+    bw.enqueue_opportunity(_make_opp())
+    assert bw._queue.full()
+    with caplog.at_level(logging.WARNING, logger="app.store.writer"):
+        for _ in range(50):
+            bw.enqueue_opportunity(_make_opp())  # 50 descartes seguidos
+    warns = [r for r in caplog.records if "Cola de persistencia llena" in r.getMessage()]
+    assert len(warns) == 1  # solo el primero dentro de la ventana de 5 s
+    assert "1 registros descartados" in warns[0].getMessage()
+    assert bw._drops_since_log == 49  # el resto quedó agregado para el próximo aviso
     await engine.dispose()
 
 
