@@ -17,6 +17,10 @@
 
 ![Dashboard de arbitraje BTC](assets/dashboard.png)
 
+> **Demo pública:** [http://159.89.187.165:8090](http://159.89.187.165:8090) — build read-only
+> sobre feeds reales de 7 exchanges (health: [/health](http://159.89.187.165:8090/health),
+> validación: [/api/v1/validation](http://159.89.187.165:8090/api/v1/validation)).
+
 ---
 
 ## Qué Es
