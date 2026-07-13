@@ -98,8 +98,7 @@ cross-exchange BTC spot: es donde la metodología se puede demostrar con datos p
 reconciliar al centavo. Los módulos triangular, funding/basis y corredor MXN existen como
 opt-in (endpoints + tests, sin UI dedicada) a propósito: demuestran que la arquitectura
 extiende la misma metodología a otras estructuras **sin mezclar sus riesgos** con el P&L
-spot, no que el negocio esté ya capturado ahí. La tesis comercial completa —fees
-institucionales, corredor MXN, mid-caps líquidos— vive en `docs/respuesta-segunda-fase.md`.
+spot, no que el negocio esté ya capturado ahí.
 
 ---
 
@@ -117,13 +116,13 @@ Si sólo hay unos minutos para revisar el proyecto, esta es la ruta sugerida:
 Lo más importante no es que aparezcan oportunidades verdes; es que el sistema sea capaz de decir
 con precisión cuándo una oportunidad aparente **no debe operarse**.
 
-Documentación nueva para evaluación y mejora:
+Documentación de apoyo:
 
 - [`docs/guion-demo-jurado.md`](docs/guion-demo-jurado.md): demo de 90 segundos, demo técnica de 5 minutos y preguntas esperadas.
-- [`docs/investigacion-y-roadmap.md`](docs/investigacion-y-roadmap.md): investigación de competidores, open source, papers y backlog priorizado.
-- [`docs/prd/README.md`](docs/prd/README.md): PRDs ejecutables para implementar el siguiente salto del proyecto.
-- [`docs/architecture/README.md`](docs/architecture/README.md): arquitectura técnica de implementación por PRD.
-- [`docs/execution/README.md`](docs/execution/README.md): plan de ejecución, work breakdown y quality gates.
+- [`docs/configuracion.md`](docs/configuracion.md): guía de configuración con ejemplos y escenarios.
+- [`docs/runbooks/`](docs/runbooks/README.md): procedimientos de operación (kill switch, feed stale, latencia alta, peg adverso).
+- [`docs/evidencia-12jul/`](docs/evidencia-12jul/): paquete de evidencia del release candidato (gates, auditorías, API, capturas).
+- [`deploy/README.md`](deploy/README.md): despliegue reproducible con Docker Compose.
 
 ---
 
@@ -206,6 +205,20 @@ Motivos de descarte:
 - `stale_venue`
 - `breaker_active`
 - `insufficient_balance`
+
+### Vistas Del Dashboard
+
+El dashboard se organiza en cuatro pestañas: **Resumen** (tesis y P&L), **Correctitud**
+(reconciliación y embudo), **Proyección** (frontier, capacity, forward) y **Operación**
+(inventario, control y configuración).
+
+| | |
+|---|---|
+| ![Correctitud: Edge Waterfall y embudo](assets/tab-correctitud.png) | ![Proyección: frontier, lifetime y forward](assets/tab-proyeccion.png) |
+| *Correctitud: reconciliación $109.75 e invariantes* | *Proyección: Break-even Frontier en vivo y lifetime* |
+
+![Operación: inventario, rebalanceo y control](assets/tab-operacion.png)
+*Operación: inventario por venue, rebalanceos y plano de control*
 
 ---
 
@@ -339,10 +352,18 @@ Backend base: `http://localhost:8000`
 | `GET /api/v1/projection?mode=demo\|live` | Break-even Frontier v2. |
 | `GET /api/v1/capacity?mode=demo\|live` | Capacity Curve. |
 | `GET /api/v1/forward?n_paths=5000` | Forward fan chart. |
-| `POST /api/v1/control/kill-switch` | Pausa global protegible con token. |
-| `POST /api/v1/demo?mode=on` | Activa replay/demo fallback. |
+| `GET /api/v1/balances` | Inventario por venue + rebalanceos. |
+| `GET /api/v1/pnl` | P&L y equity de la sesión simulada. |
+| `GET /api/v1/opportunities/{id}/explain` | Desglose de costes y veredicto de una oportunidad. |
+| `POST /api/v1/opportunities/{id}/what-if` | What-if read-only (fee/latencia/tamaño) sin tocar estado. |
+| `GET /api/v1/session/export` | Export auditable de la sesión (nunca incluye el token). |
+| `GET /api/v1/config/sim` · `PUT` | Configuración base del motor (el PUT exige token; inconsistencias → `422`/`409`). |
+| `GET /api/v1/demo/scenarios` | Catálogo de escenarios esperado→observado para el jurado. |
+| `POST /api/v1/control/kill-switch` · `/control/resume` | Pausa/reanuda global (token). |
+| `POST /api/v1/demo?mode=on` | Activa replay/demo fallback (token). |
 
-Los modos inválidos de `projection` y `capacity` devuelven `422`, por contrato.
+Los modos inválidos de `projection` y `capacity` devuelven `422`, por contrato. Todos los POST de
+control exigen `X-Control-Token` cuando `ARB_CONTROL_TOKEN` está configurado.
 
 ---
 
@@ -396,37 +417,249 @@ make backend-test
 
 ---
 
+## Despliegue Con Docker
+
+El stack canónico de producción vive en `deploy/standalone/` (compose con 3 servicios detrás de
+un solo puerto):
+
+```mermaid
+flowchart LR
+  U[Navegador] -->|:8090| N[nginx]
+  N -->|/| F[frontend<br/>Next.js :3100]
+  N -->|/api /health /metrics| B[backend<br/>FastAPI :8000]
+  B --> V[(volumen arb-data<br/>SQLite WAL)]
+```
+
+```bash
+cd deploy/standalone
+cp .env.example .env        # editar: ARB_CONTROL_TOKEN obligatorio
+docker compose up -d --build
+curl http://localhost:8090/health
+```
+
+Propiedades del deploy:
+
+- **Un solo origen público** (`:8090`): nginx enruta `/api/` y `/health` al backend (con bloque
+  dedicado sin buffering para el SSE) y el resto al frontend; no hay CORS ni puertos extra.
+- **Arranque seguro por diseño**: con `ARB_ENV=prod` el backend **no arranca** sin
+  `ARB_CONTROL_TOKEN`; el token viaja sólo como header, nunca en el bundle del frontend.
+- **Persistencia real**: la DB vive en el volumen `arb-data` con WAL y `auto_vacuum=INCREMENTAL`;
+  sobrevive `docker compose restart` y recreación de contenedores.
+- **Build read-only para demo pública**: `NEXT_PUBLIC_READ_ONLY=1` como build-arg del frontend
+  compila una UI sin controles mutantes (badge `READ-ONLY DEMO`); el backend sigue protegido por
+  token de todas formas.
+- Contenedores como usuario no-root, healthchecks con stdlib y `.dockerignore` que impide hornear
+  datos en la imagen.
+
+Variables del compose (`deploy/standalone/.env`):
+
+| Variable | Uso |
+|---|---|
+| `ARB_CONTROL_TOKEN` | Obligatoria; el compose falla explícitamente si falta y el backend no arranca sin ella en prod. |
+| `ARB_DB_RETENTION_HOURS` | Opcional (default 24). Dimensiona el disco: `horas × ~28 MB` (ej. `528` ≈ 15 GB). |
+
+`ARB_ENV=prod`, la ruta de la DB en el volumen y `NEXT_PUBLIC_READ_ONLY=1` (build del frontend
+sin controles de mutación, validado `0|1`) están fijados dentro del compose a propósito: el stack
+público no puede levantarse accidentalmente en una variante insegura.
+
+Detalle completo y troubleshooting en [`deploy/README.md`](deploy/README.md).
+
+---
+
 ## Configuración
 
-Todo lo económico y operativo vive en `backend/app/config.py` y puede sobrescribirse con variables
-`ARB_`.
-
-Ejemplos:
+Todo lo económico y operativo vive en `backend/app/config.py` (pydantic-settings) y puede
+sobrescribirse con variables de entorno con prefijo `ARB_` o con un archivo `backend/.env`.
+Para campos anidados (fees por exchange) el delimitador es `__`:
 
 ```bash
 export ARB_INGEST_AUTOSTART=false
 export ARB_CONTROL_TOKEN="<set-a-strong-token>"
 export ARB_EXEC_LATENCY_MS=150
 export ARB_EXPECTED_TRADES_PER_REBALANCE=5
-export ARB_EXCHANGES__BINANCE__FEE_TAKER=0.001
+export ARB_EXCHANGES__BINANCE__FEE_TAKER=0.001   # anidado: exchanges.binance.fee_taker
 ```
 
-Variables relevantes:
+El motor **arranca sin configurar nada**: todos los campos tienen defaults razonables.
+Guía extendida con escenarios en [`docs/configuracion.md`](docs/configuracion.md).
 
-| Variable | Uso |
-|---|---|
-| `ARB_INGEST_AUTOSTART` | Arranca o desactiva feeds reales. |
-| `ARB_CONTROL_TOKEN` | Protege endpoints de control. **Obligatorio con `ARB_ENV=prod`** (el arranque falla sin él). |
-| `ARB_SSE_MAX_CLIENTS` | Tope de clientes SSE concurrentes (default 64; 0 = sin límite). |
-| `ARB_EXEC_LATENCY_MS` | Latencia simulada para leg risk/proyección. |
-| `ARB_MAX_SLIPPAGE` | Filtro pre-trade de slippage. |
-| `ARB_PEG_TOLERANCE` | Tolerancia de desviación stable/USD. |
-| `ARB_EXPECTED_TRADES_PER_REBALANCE` | Amortización del coste fijo de rebalanceo. |
-| `ARB_STRATEGY_TRIANGULAR_ENABLED` | Activa triangular demo/replay. Default `false`. |
-| `ARB_STRATEGY_FUNDING_ENABLED` | Activa funding/basis read-only. Default `false`. |
-| `ARB_STRATEGY_REGIONAL_MXN_ENABLED` | Activa MXN experimental. Default `false`. |
-| `ARB_STRATEGY_MXN_USD_RATE` | FX USD/MXN requerido para regional MXN. |
-| `ARB_DB_URL` | SQLite/Postgres async. |
+### Variables esenciales
+
+| Variable | Default | Uso |
+|---|---|---|
+| `ARB_ENV` | `dev` | Entorno. Con `prod`, el arranque **falla** si falta `ARB_CONTROL_TOKEN`. |
+| `ARB_CONTROL_TOKEN` | vacío | Protege los POST de control (`X-Control-Token`). Vacío = sin auth (solo dev). |
+| `ARB_INGEST_AUTOSTART` | `true` | Conecta los feeds WS reales al arrancar. `false` para smoke/CI. |
+| `ARB_DB_URL` | `sqlite+aiosqlite:///./arbitraje.db` | Persistencia async (SQLite o Postgres). |
+| `ARB_DB_RETENTION_HOURS` | `24` | Ventana de datos retenida; la poda corre de fondo. `0` = sin límite. |
+| `ARB_DEFAULT_TRADE_QTY_BTC` | `1.0` | Tamaño objetivo con el que se camina el libro. |
+
+### Todas las variables
+
+<details>
+<summary><strong>Servidor y seguridad</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_APP_NAME` | `arbitraje-btc` | Nombre reportado en `/health`. |
+| `ARB_ENV` | `dev` | `dev` \| `prod`. En `prod` exige `ARB_CONTROL_TOKEN` (validador en arranque). |
+| `ARB_LOG_LEVEL` | `INFO` | Nivel de logging. |
+| `ARB_CORS_ORIGINS` | `["http://localhost:3000"]` | Orígenes permitidos para el frontend. |
+| `ARB_CONTROL_TOKEN` | vacío | Token de los endpoints de control (kill-switch, resume, demo, config, retención). Comparación en tiempo constante; token no-ASCII responde `401`. |
+| `ARB_API_KEY` | vacío | Si se setea, todas las rutas `/api/v1/*` exigen header `X-API-Key` (salvo health/docs). |
+| `ARB_API_RATE_LIMIT_PER_MIN` | `0` | Límite de requests/min por cliente. `0` = sin límite. |
+
+</details>
+
+<details>
+<summary><strong>Exchanges y mercado</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_EXCHANGES__<ID>__FEE_TAKER` | por venue | Fee taker (fracción: `0.001` = 0.10%). |
+| `ARB_EXCHANGES__<ID>__WITHDRAWAL_BTC` | por venue | Coste BTC por retiro on-chain (rebalanceo amortizado). |
+| `ARB_EXCHANGES__<ID>__OB_LIMIT` | por venue | Profundidad de order book solicitada/validada. |
+| `ARB_EXCHANGES__<ID>__INITIAL_BTC` | `2.0` | Inventario BTC pre-posicionado por venue. |
+| `ARB_EXCHANGES__<ID>__INITIAL_QUOTE` | `100000` | Quote inicial (USD/USDT) por venue. |
+| `ARB_EXCHANGES__<ID>__ENABLED` | `true` | Activa/desactiva el venue. |
+| `ARB_QUOTE_TARGET` | `USD` | Moneda de normalización de todos los books. |
+| `ARB_INGEST_AUTOSTART` | `true` | Arranca los WS loops en el lifespan. |
+| `ARB_INGEST_MAX_BACKOFF` | `30.0` | Tope (s) del backoff exponencial de reconexión. |
+
+</details>
+
+<details>
+<summary><strong>Bus, SSE y throttling</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_BUS_MAXSIZE` | `1000` | Cola interna acotada (drop-oldest bajo presión). |
+| `ARB_SSE_CLIENT_QUEUE_MAXSIZE` | `500` | Cola de eventos por cliente SSE. |
+| `ARB_SSE_MAX_CLIENTS` | `64` | Tope de clientes SSE concurrentes (anti-DoS en deploy público). `0` = sin límite. |
+| `ARB_SSE_PING_SECONDS` | `15` | Keep-alive del stream. |
+| `ARB_QUOTE_THROTTLE_MS` | `100` | Máx. ~10 quotes/s por venue hacia el cliente. |
+
+</details>
+
+<details>
+<summary><strong>Peg y normalización</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_PEG_PAIRS` | `{"USDT": "USDT/USD"}` | Pares usados para medir el peg vivo. |
+| `ARB_PEG_SOURCE_EXCHANGE` | `kraken` | Venue de referencia del peg. |
+| `ARB_PEG_TOLERANCE` | `0.005` | Desviación máxima stable/USD (±0.5%); peor ⇒ descarte `peg_adverse`. |
+
+</details>
+
+<details>
+<summary><strong>Economía de ejecución</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_MIN_NET_PROFIT_USD` | `0.0` | Umbral de neto por trade para considerarlo viable. |
+| `ARB_NET_MARGIN_BUFFER_BPS` | `0.0` | Colchón extra sobre el ruido del peg. |
+| `ARB_MAX_SLIPPAGE` | `0.0010` | Filtro pre-trade de slippage (0.10%). |
+| `ARB_EXEC_LATENCY_MS` | `150` | Latencia simulada de ejecución (leg risk y proyección). |
+| `ARB_DEFAULT_TRADE_QTY_BTC` | `1.0` | Tamaño objetivo del cruce. |
+| `ARB_EXPECTED_TRADES_PER_REBALANCE` | `1.0` | Amortización del coste fijo on-chain entre N trades (decisión, no ledger). |
+
+</details>
+
+<details>
+<summary><strong>Detección y ranking</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_ZSCORE_WINDOW` | `200` | Ventana W del z-score causal (100–300 ticks). |
+| `ARB_Z_OPEN` / `ARB_Z_CLOSE` / `ARB_Z_STOP` | `2.0` / `0.5` / `3.0` | Umbrales de apertura, cierre y stop de la señal estadística. |
+| `ARB_SCORE_PFILL_FLOOR` | `0.05` | P(fill) mínima usada en el score. |
+| `ARB_SCORE_RISK_AVERSION_BPS` | `10.0` | Penalización de deriva adversa (bps/s de latencia sobre el notional). |
+
+</details>
+
+<details>
+<summary><strong>Riesgo y breakers</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_STALENESS_MS` | `750` | Book más viejo que esto ⇒ el venue sale del cómputo. |
+| `ARB_WATCHDOG_INTERVAL_MS` | `250` | Cadencia del watchdog (~staleness/3). |
+| `ARB_INVENTORY_SKEW_LIMIT` | `0.5` | Desvío de inventario permitido antes de rebalancear. |
+| `ARB_MAX_DRAWDOWN_USD` | `5000` | Kill switch automático por drawdown. |
+| `ARB_VOLATILITY_BREAKER_BPS` | `200` | Breaker por rango de mid en la ventana de volatilidad. |
+| `ARB_BREAKER_INTERVAL_MS` | `500` | Cadencia de recomputo de breakers. |
+| `ARB_VOLATILITY_WINDOW_MS` | `5000` | Ventana del breaker de volatilidad. |
+| `ARB_REBALANCE_INTERVAL_MS` | `30000` | Cadencia del chequeo de drift de inventario (periódico, no por trade). |
+| `ARB_INTEGRITY_MODE` | `warn` | `generic` \| `warn` \| `enforce`: rigor de validación de books por venue. |
+
+</details>
+
+<details>
+<summary><strong>Demo, replay y backtest</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_DEMO_FALLBACK_ENABLED` | `true` | Arma el fallback a replay cuando no hay datos vivos. |
+| `ARB_DEMO_STALE_MS` | `2000` | Sin dato real durante esto ⇒ activa el replay. |
+| `ARB_DEMO_REPLAY_INTERVAL_MS` | `50` | Cadencia de inyección de ticks en replay. |
+| `ARB_DEMO_RECORDING_PATH` | vacío | JSONL de respaldo si el buffer vivo está vacío. |
+| `ARB_RECORD_ENABLED` | `true` | Graba books normalizados (ring buffer) para replay. |
+| `ARB_RECORD_MAXLEN` | `20000` | Tamaño del ring de grabación. |
+| `ARB_BACKTEST_IN_SAMPLE_FRAC` | `0.7` | Split in/out-of-sample del replay. |
+
+</details>
+
+<details>
+<summary><strong>Ejecución protegida (testnet/dry-run)</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_EXECUTION_MODE` | `disabled` | `disabled` \| `dry_run` \| `testnet`. Ninguna ruta de ejecución sin opt-in explícito. |
+| `ARB_ENABLE_TEST_ORDERS` | `false` | Permite `test order` en testnet. |
+| `ARB_EXECUTION_REQUEST_TIMEOUT_S` | `5.0` | Timeout de la petición de ejecución. |
+| `ARB_BINANCE_TESTNET_API_KEY/SECRET` | vacío | Credenciales SOLO de testnet. |
+| `ARB_EXECUTION_LOCAL_BTC_BALANCE` | `1.0` | Balance local del adapter determinista (no es dinero real). |
+| `ARB_EXECUTION_LOCAL_QUOTE_BALANCE_USD` | `100000` | Quote local del adapter determinista. |
+
+</details>
+
+<details>
+<summary><strong>Estrategias opt-in (PRD-008)</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_STRATEGY_TRIANGULAR_ENABLED` | `false` | Triangular demo/replay. |
+| `ARB_STRATEGY_TRIANGULAR_START_CURRENCY` | `USD` | Moneda inicial del ciclo triangular. |
+| `ARB_STRATEGY_TRIANGULAR_TRADE_SIZE` | `1000` | Notional del ciclo. |
+| `ARB_STRATEGY_TRIANGULAR_MIN_PROFIT_BPS` | `0` | Umbral de reporte. |
+| `ARB_STRATEGY_FUNDING_ENABLED` | `false` | Funding/basis read-only (separado del P&L spot). |
+| `ARB_STRATEGY_FUNDING_HEDGE_COST_BPS` | `0` | Coste de hedge descontado. |
+| `ARB_STRATEGY_REGIONAL_MXN_ENABLED` | `false` | Comparación BTC/MXN experimental. |
+| `ARB_STRATEGY_MXN_USD_RATE` | — | FX USD/MXN explícito (requerido si MXN está activo). |
+| `ARB_STRATEGY_MXN_FIAT_FEE_BPS` | `20` | Fricción fiat del corredor MXN. |
+
+</details>
+
+<details>
+<summary><strong>Métricas, calibración y persistencia</strong></summary>
+
+| Variable | Default | Explicación |
+|---|---|---|
+| `ARB_METRICS_WINDOW` | `2000` | Muestras por métrica en ventana. |
+| `ARB_LIFETIME_GAP_MS` | `250` | Gap que cierra un episodio de cruce. |
+| `ARB_METRICS_EMIT_MS` | `1000` | Cadencia máx. del push SSE de métricas. |
+| `ARB_CALIBRATION_MODE` | `observe_only` | `observe_only` \| `report` \| `score` \| `gate` para P_survive. |
+| `ARB_SHADOW_SAMPLE_MAXLEN` | `20000` | Muestras shadow para calibración. |
+| `ARB_SURVIVAL_LATENCIES_MS` | `[50,100,200,500,1000]` | Latencias evaluadas en supervivencia. |
+| `ARB_DB_URL` | `sqlite+aiosqlite:///./arbitraje.db` | SQLite o Postgres async. |
+| `ARB_STORE_BATCH_SIZE` | `100` | Tamaño de batch de escritura. |
+| `ARB_STORE_FLUSH_SECONDS` | `1.0` | Flush periódico del store. |
+| `ARB_DB_RETENTION_HOURS` | `24` | Ventana retenida. Las opportunities entran a ~36/s (~670 MB/día); dimensiona disco = `horas × 28 MB`. Ej.: `528` h ≈ 15 GB. |
+| `ARB_DB_PRUNE_INTERVAL_S` | `300` | Cadencia de la poda de fondo. |
+| `ARB_DB_VACUUM_ON_PRUNE` | `false` | VACUUM tras podar (recupera disco; costoso). |
+
+</details>
 
 ---
 
@@ -542,17 +775,17 @@ backend/
   tests/
 
 frontend/
-  app/
-  components/
-    BreakEvenFrontier.tsx
-    CapacityCurve.tsx
-    EdgeWaterfall.tsx
-    ForwardFanChart.tsx
-    FunnelPanel.tsx
-    LiveLineChart.tsx
-    OpportunitiesTable.tsx
-    PricesTable.tsx
-  hooks/
+  app/            layout, error boundaries, página principal con tabs
+  components/     25 paneles: EdgeWaterfall, BreakEvenFrontier, CapacityCurve,
+                  ForwardFanChart, FunnelPanel, InventoryPanel, ControlPanel,
+                  ConfigPanel, StrategyLabPanel, NaiveVsEdgePanel, WinsPanel,
+                  OpportunityExplainDrawer, SurvivalCalibrationPanel, ...
+  hooks/          useStream (SSE + polling ligero/pesado con backoff)
+  lib/            config (READ_ONLY build-time), format (locales fijos)
+
+deploy/
+  Dockerfile              backend (uv frozen, non-root, /data)
+  standalone/             compose canónico: backend + frontend + nginx (:8090)
 ```
 
 ---
@@ -569,6 +802,12 @@ La versión actual incluye una capa de análisis más profunda que un MVP típic
 - Cableado live contra `detector.books` / `latest_norm`, no contra estado ficticio.
 - Tests HTTP de contratos de proyección, capacidad y forward.
 - Dashboard actualizado con tres paneles de proyección.
+- Ledger atómico validate-then-apply: ninguna ejecución puede dejar balances inconsistentes.
+- Build read-only del frontend para demo pública + plano de control con token en tiempo constante.
+- Panel de inventario y rebalanceo con timestamps reales.
+- Escenarios esperado→observado deterministas para auditar la demo en vivo.
+- Retención de BD configurable con poda incremental (la DB ya no crece sin límite).
+- Deploy reproducible: compose canónico con volumen persistente, healthcheck real y non-root.
 - README como documentación única de entrega pública.
 
 Estas mejoras están pensadas para que el proyecto no sólo "funcione", sino que explique sus

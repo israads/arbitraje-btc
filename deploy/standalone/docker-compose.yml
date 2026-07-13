@@ -22,6 +22,9 @@ services:
       # SQLite en el volumen (RF-001). CUATRO barras = ruta absoluta /data/arbitraje.db;
       # DB + sidecars -wal/-shm viven en /data, nunca en la capa escribible de /app.
       ARB_DB_URL: sqlite+aiosqlite:////data/arbitraje.db
+      # Ventana de datos retenida (poda de fondo). Dimensiona el disco: horas × ~28 MB.
+      # Default 24 h ≈ 0.7 GB; 528 h ≈ 15 GB. Ajustable desde .env sin tocar el compose.
+      ARB_DB_RETENTION_HOURS: ${ARB_DB_RETENTION_HOURS:-24}
     volumes:
       - arb-data:/data
     expose:
